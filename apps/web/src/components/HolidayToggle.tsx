@@ -7,12 +7,16 @@ export function HolidayToggle({
   classId,
   year,
   week,
+  date,
   isHoliday,
+  legacyWeek,
 }: {
   classId: number;
   year: number;
   week: number;
+  date: string;
   isHoliday: boolean;
+  legacyWeek?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -31,16 +35,20 @@ export function HolidayToggle({
           fd.set("class_id", String(classId));
           fd.set("year", String(year));
           fd.set("week", String(week));
+          fd.set("holiday_on", date);
           fd.set("holiday", isHoliday ? "0" : "1");
+          if (isHoliday && legacyWeek) fd.set("clear_week", "1");
           await setClassHoliday(fd);
         });
       }}
     >
       {pending
         ? "Saving…"
-        : isHoliday
-          ? "Remove holiday"
-          : "Mark week as holiday"}
+        : isHoliday && legacyWeek
+          ? "Remove week holiday"
+          : isHoliday
+            ? "Remove holiday"
+            : "Mark this day as holiday"}
     </button>
   );
 }

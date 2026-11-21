@@ -1,7 +1,9 @@
 "use client";
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 import { setAttendanceByDate } from "@/lib/actions";
+import { getISOWeekParts } from "@/lib/format";
 
 type StudentOption = {
   id: number;
@@ -20,12 +22,24 @@ export function PresentByDateForm({
   students: StudentOption[];
   disabled?: boolean;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
-  const [date, setDate] = useState(defaultDate);
   const [selected, setSelected] = useState<number[]>(() =>
     students.filter((s) => s.attended).map((s) => s.id),
   );
   const [error, setError] = useState("");
+
+  function goToDate(nextDate: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate === defaultDate) return;
+    const parts = getISOWeekParts(new Date(`${nextDate}T00:00:00`));
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("year", String(parts.year));
+    params.set("week", String(parts.week));
+    params.set("date", nextDate);
+    router.push(`${pathname}?${params.toString()}`);
+  }
 
   function toggle(id: number) {
     setSelected((current) =>
@@ -43,10 +57,16 @@ export function PresentByDateForm({
       onSubmit={(e) => {
         e.preventDefault();
         setError("");
+        if (
+          selected.length === 0 &&
+          !confirm("Mark everyone absent on this class day?")
+        ) {
+          return;
+        }
         startTransition(async () => {
           const fd = new FormData();
           fd.set("class_id", String(classId));
-          fd.set("attended_on", date);
+          fd.set("attended_on", defaultDate);
           for (const id of selected) fd.append("student_id", String(id));
           const result = await setAttendanceByDate(fd);
           if (!result.ok) setError(result.error);
@@ -60,9 +80,9 @@ export function PresentByDateForm({
             type="date"
             name="attended_on"
             className="field"
-            value={date}
+            value={defaultDate}
             disabled={disabled || pending}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => goToDate(e.target.value)}
             required
           />
         </label>
@@ -100,7 +120,7 @@ export function PresentByDateForm({
       <button
         type="submit"
         className="btn-primary"
-        disabled={disabled || pending || selected.length === 0}
+        disabled={disabled || pending}
       >
         {pending ? "Saving…" : "Save present students"}
       </button>

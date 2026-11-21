@@ -137,7 +137,7 @@ declare global {
   var __feeEnvLoaded: boolean | undefined;
 }
 
-export type BillingPeriod = "monthly" | "weekly";
+export type BillingPeriod = "monthly" | "weekly" | "daily";
 
 export class DatabaseConfigError extends Error {
   constructor(message: string) {
@@ -231,7 +231,7 @@ const MIGRATION_SQL = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     monthly_fee INTEGER NOT NULL DEFAULT 0 CHECK (monthly_fee >= 0),
-    billing_period TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_period IN ('monthly', 'weekly')),
+    billing_period TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_period IN ('monthly', 'weekly', 'daily')),
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
 
@@ -430,6 +430,272 @@ async function rebuildPaymentsTable(
   );
 }
 
+async function tableCreateSql(
+  mode: "remote" | "local",
+  table: string,
+): Promise<string> {
+  if (mode === "local") {
+    const row = getLocalDb()
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`,
+      )
+      .get(table) as { sql?: string } | undefined;
+    return row?.sql ?? "";
+  }
+  const result = await getRemoteDb().execute({
+    sql: `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    args: [table],
+  });
+  return String(result.rows[0]?.sql ?? "");
+}
+
+async function recoverStagingTable(
+  mode: "remote" | "local",
+  source: string,
+  staging: string,
+) {
+  const hasSource = await tableExists(mode, source);
+  const hasStaging = await tableExists(mode, staging);
+  if (!hasSource && hasStaging) {
+    await execSql(mode, `ALTER TABLE ${staging} RENAME TO ${source}`);
+    return;
+  }
+  if (hasSource && hasStaging) {
+    await execSql(mode, `DROP TABLE ${staging}`);
+  }
+}
+
+async function replaceTable(
+  mode: "remote" | "local",
+  source: string,
+  staging: string,
+  createSql: string,
+  copySql: string,
+  finalizeSql: string[],
+) {
+  await recoverStagingTable(mode, source, staging);
+  const before = await rawCount(mode, source);
+  await execSql(mode, createSql);
+  await execSql(mode, copySql);
+  const copied = await rawCount(mode, staging);
+  if (copied !== before) {
+    await execSql(mode, `DROP TABLE ${staging}`);
+    throw new DatabaseConfigError(
+      `${source} migration refused: copied ${copied} of ${before} rows. Existing rows were left unchanged.`,
+    );
+  }
+
+  const finalize = [
+    `DROP TABLE ${source}`,
+    `ALTER TABLE ${staging} RENAME TO ${source}`,
+    ...finalizeSql,
+  ];
+
+  if (mode === "local") {
+    const db = getLocalDb();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const sql of finalize) db.exec(sql);
+      db.exec("COMMIT");
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // Keep the original error.
+      }
+      throw error;
+    }
+    return;
+  }
+
+  await getRemoteDb().batch(
+    finalize.map((sql) => ({ sql })),
+    "write",
+  );
+}
+
+async function ensureDayAttendance(mode: "remote" | "local") {
+  if (!(await tableExists(mode, "attendance"))) return;
+  const createSql = await tableCreateSql(mode, "attendance");
+  if (/UNIQUE\s*\(\s*student_id\s*,\s*attended_on\s*\)/i.test(createSql)) {
+    await execSql(
+      mode,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_day ON attendance(attended_on)`,
+    );
+    return;
+  }
+
+  const total = await rawCount(mode, "attendance");
+  const distinctSql = `SELECT COUNT(*) AS n FROM (SELECT student_id, attended_on FROM attendance GROUP BY student_id, attended_on)`;
+  const distinct =
+    mode === "local"
+      ? Number(
+          (getLocalDb().prepare(distinctSql).get() as { n: number }).n || 0,
+        )
+      : Number((await getRemoteDb().execute(distinctSql)).rows[0]?.n || 0);
+  if (distinct !== total) {
+    throw new DatabaseConfigError(
+      `Attendance migration refused: ${total - distinct} rows share a student and class date. Existing attendance was left unchanged.`,
+    );
+  }
+
+  await replaceTable(
+    mode,
+    "attendance",
+    "attendance_v2",
+    `
+    CREATE TABLE attendance_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      year INTEGER NOT NULL CHECK (year >= 2000),
+      week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 53),
+      attended INTEGER NOT NULL DEFAULT 1 CHECK (attended IN (0, 1)),
+      attended_on TEXT NOT NULL,
+      UNIQUE (student_id, attended_on)
+    )
+    `,
+    `
+    INSERT INTO attendance_v2 (id, student_id, year, week, attended, attended_on)
+    SELECT id, student_id, year, week, attended, attended_on
+    FROM attendance
+    `,
+    [
+      `CREATE INDEX IF NOT EXISTS idx_attendance_week ON attendance(year, week)`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_day ON attendance(attended_on)`,
+    ],
+  );
+}
+
+async function ensureDayHolidays(mode: "remote" | "local") {
+  if (!(await tableExists(mode, "class_holidays"))) return;
+  const cols = await tableColumns(mode, "class_holidays");
+  if (!cols.includes("holiday_on")) {
+    await replaceTable(
+      mode,
+      "class_holidays",
+      "class_holidays_v2",
+      `
+      CREATE TABLE class_holidays_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+        year INTEGER NOT NULL CHECK (year >= 2000),
+        week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 53),
+        holiday_on TEXT,
+        note TEXT,
+        UNIQUE (class_id, holiday_on)
+      )
+      `,
+      `
+      INSERT INTO class_holidays_v2 (id, class_id, year, week, holiday_on, note)
+      SELECT id, class_id, year, week, NULL, note
+      FROM class_holidays
+      `,
+      [],
+    );
+  }
+
+  await execSql(
+    mode,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_class_holidays_legacy_week
+     ON class_holidays(class_id, year, week) WHERE holiday_on IS NULL`,
+  );
+  await execSql(
+    mode,
+    `CREATE INDEX IF NOT EXISTS idx_class_holidays_week ON class_holidays(class_id, year, week)`,
+  );
+  await execSql(
+    mode,
+    `CREATE INDEX IF NOT EXISTS idx_class_holidays_day ON class_holidays(class_id, holiday_on)`,
+  );
+}
+
+async function ensureDailyBillingPeriod(mode: "remote" | "local") {
+  if (!(await tableExists(mode, "classes"))) return;
+  const createSql = await tableCreateSql(mode, "classes");
+  if (createSql.includes("'daily'")) return;
+
+  await recoverStagingTable(mode, "classes", "classes_v2");
+  const before = await rawCount(mode, "classes");
+  const createNew = `
+    CREATE TABLE classes_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      monthly_fee INTEGER NOT NULL DEFAULT 0 CHECK (monthly_fee >= 0),
+      billing_period TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_period IN ('monthly', 'weekly', 'daily')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    )
+  `;
+  const copy = `
+    INSERT INTO classes_v2 (id, name, monthly_fee, billing_period, created_at)
+    SELECT id, name, monthly_fee,
+      CASE
+        WHEN billing_period IN ('monthly', 'weekly', 'daily') THEN billing_period
+        ELSE 'monthly'
+      END,
+      created_at
+    FROM classes
+  `;
+
+  if (mode === "local") {
+    const db = getLocalDb();
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.exec(createNew);
+      db.exec(copy);
+      const copied = Number(
+        (db.prepare(`SELECT COUNT(*) AS n FROM classes_v2`).get() as { n: number })
+          .n || 0,
+      );
+      if (copied !== before) {
+        db.exec("DROP TABLE classes_v2");
+        throw new DatabaseConfigError(
+          `Class migration refused: copied ${copied} of ${before} rows. Existing classes were left unchanged.`,
+        );
+      }
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.exec("DROP TABLE classes");
+        db.exec("ALTER TABLE classes_v2 RENAME TO classes");
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Keep the original error.
+        }
+        throw error;
+      }
+    } finally {
+      db.exec("PRAGMA foreign_keys = ON");
+    }
+    return;
+  }
+
+  const remote = getRemoteDb();
+  await remote.execute("PRAGMA foreign_keys = OFF");
+  try {
+    await remote.execute(createNew);
+    await remote.execute(copy);
+    const copied = await rawCount(mode, "classes_v2");
+    if (copied !== before) {
+      await execSql(mode, "DROP TABLE classes_v2");
+      throw new DatabaseConfigError(
+        `Class migration refused: copied ${copied} of ${before} rows. Existing classes were left unchanged.`,
+      );
+    }
+    await remote.batch(
+      [
+        { sql: "DROP TABLE classes" },
+        { sql: "ALTER TABLE classes_v2 RENAME TO classes" },
+      ],
+      "write",
+    );
+  } finally {
+    await remote.execute("PRAGMA foreign_keys = ON");
+  }
+}
+
 async function ensureSchemaUpgrades(mode: "remote" | "local") {
   const before = await snapshotCoreCounts(mode);
   await recoverPaymentsStaging(mode, "payments_v2");
@@ -530,6 +796,10 @@ async function ensureSchemaUpgrades(mode: "remote" | "local") {
     `CREATE INDEX IF NOT EXISTS idx_class_holidays_week ON class_holidays(class_id, year, week)`,
   );
 
+  await ensureDayHolidays(mode);
+  await ensureDayAttendance(mode);
+  await ensureDailyBillingPeriod(mode);
+
   assertCountsPreserved(before, await snapshotCoreCounts(mode));
 }
 
@@ -545,7 +815,7 @@ async function migrate() {
         week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 53),
         attended INTEGER NOT NULL DEFAULT 1 CHECK (attended IN (0, 1)),
         attended_on TEXT NOT NULL,
-        UNIQUE (student_id, year, week)
+        UNIQUE (student_id, attended_on)
       )`,
     );
     await execSql(
@@ -555,10 +825,14 @@ async function migrate() {
         class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
         year INTEGER NOT NULL CHECK (year >= 2000),
         week INTEGER NOT NULL CHECK (week BETWEEN 1 AND 53),
+        holiday_on TEXT,
         note TEXT,
-        UNIQUE (class_id, year, week)
+        UNIQUE (class_id, holiday_on)
       )`,
     );
+    await ensureDayHolidays(mode);
+    await ensureDayAttendance(mode);
+    await ensureDailyBillingPeriod(mode);
     return;
   }
 
@@ -708,5 +982,6 @@ export type ClassHolidayRow = {
   class_id: number;
   year: number;
   week: number;
+  holiday_on: string | null;
   note: string | null;
 };

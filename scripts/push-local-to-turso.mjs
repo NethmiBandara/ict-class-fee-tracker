@@ -38,7 +38,7 @@ const TABLES = [
   },
   {
     name: "class_holidays",
-    columns: ["id", "class_id", "year", "week", "note"],
+    columns: ["id", "class_id", "year", "week", "holiday_on", "note"],
   },
 ];
 

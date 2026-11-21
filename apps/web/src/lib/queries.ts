@@ -6,6 +6,7 @@ export {
   getAnnualStats,
   getClass,
   getClassAnnualStats,
+  getClassDayHoliday,
   getClassHoliday,
   getClassMonthlyStats,
   getMonthlyIncomeForYear,
