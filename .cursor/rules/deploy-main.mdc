@@ -1,0 +1,16 @@
+---
+description: After a requested change, commit it on master and deploy
+alwaysApply: true
+---
+
+# Ship changes on master
+
+This repo’s main branch is `master`. Production is the Vercel app at https://ict-class-fee-tracker.vercel.app.
+
+After a requested code change is finished and the user wants it kept:
+
+1. Commit the change on `master`. Fast-forward `master` if the work is on another branch.
+2. Push `origin master`. That push is the deploy. Do not force-push.
+3. Leave unrelated files, including incidental `package-lock.json` noise, unstaged.
+4. Do not run `scripts/push-local-to-turso.mjs`. A deploy updates code only. Local SQLite and Turso stay separate.
+5. After the deploy finishes, check `https://ict-class-fee-tracker.vercel.app/api/health`. `mode` must be `remote`, and class, student, payment, attendance, and holiday counts must not drop.
