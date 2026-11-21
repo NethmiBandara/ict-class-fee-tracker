@@ -2,7 +2,16 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { MonthPicker } from "@/components/MonthPicker";
 import { StatCard } from "@/components/StatCard";
-import { formatLKR, monthLabel, parsePeriod, weekLabel } from "@/lib/format";
+import {
+  billingPeriodLabel,
+  dailySlotToDate,
+  feeUnit,
+  formatClassDay,
+  formatLKR,
+  monthLabel,
+  parsePeriod,
+  weekLabel,
+} from "@/lib/format";
 import {
   getAnnualStats,
   getClassMonthlyStats,
@@ -125,25 +134,22 @@ export default async function DashboardPage({
                         <p className="text-xs text-[var(--muted)]">
                           <span
                             className={`badge mr-1 ${
-                              row.billing_period === "weekly"
-                                ? "badge-unpaid"
-                                : "badge-paid"
+                              row.billing_period === "monthly"
+                                ? "badge-paid"
+                                : "badge-unpaid"
                             }`}
                           >
-                            {row.billing_period === "weekly"
-                              ? "Weekly"
-                              : "Monthly"}
+                            {billingPeriodLabel(row.billing_period)}
                           </span>
-                          Fee {formatLKR(row.monthly_fee)}
-                          {row.billing_period === "weekly" ? "/wk" : "/mo"} ·{" "}
+                          Fee {formatLKR(row.monthly_fee)} {feeUnit(row.billing_period)} ·{" "}
                           {row.active_students} active
                         </p>
                       </td>
                       <td>{row.paid_students}</td>
                       <td>
-                        {row.billing_period === "weekly"
-                          ? "—"
-                          : row.unpaid_students}
+                        {row.billing_period === "monthly"
+                          ? row.unpaid_students
+                          : "—"}
                       </td>
                       <td>{formatLKR(row.income)}</td>
                     </tr>
@@ -171,9 +177,11 @@ export default async function DashboardPage({
                       <p className="font-medium">{p.student_name}</p>
                       <p className="text-xs text-[var(--muted)]">
                         {p.class_name} ·{" "}
-                        {p.week > 0
-                          ? weekLabel(p.year, p.week)
-                          : monthLabel(p.year, p.month)}
+                        {dailySlotToDate(p.slot)
+                          ? formatClassDay(dailySlotToDate(p.slot) || "")
+                          : p.week > 0
+                            ? weekLabel(p.year, p.week)
+                            : monthLabel(p.year, p.month)}
                       </p>
                     </div>
                     <div className="text-right">

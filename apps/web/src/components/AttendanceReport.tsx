@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { StudentAttendanceStat } from "@/lib/queries";
-import { weekCountLabel } from "@/lib/format";
+import { dayCountLabel } from "@/lib/format";
 
 type ViewMode = "class" | "student";
 
@@ -156,7 +156,11 @@ export function AttendanceReport({
                 className={chipClass(classId === item.class_id, "ink")}
               >
                 {item.class_name}
-                {item.billing_period === "weekly" ? " · W" : ""}
+                {item.billing_period === "weekly"
+                  ? " · W"
+                  : item.billing_period === "daily"
+                    ? " · D"
+                    : ""}
               </Link>
             ))}
           </div>
@@ -168,7 +172,7 @@ export function AttendanceReport({
         {" · "}
         {totals.students} student{totals.students === 1 ? "" : "s"}
         {" · "}
-        {weekCountLabel(totals.present_weeks)} present
+        {dayCountLabel(totals.present_weeks)} present
         {totals.monthly
           ? ` · ${totals.unpaid_months} unpaid fee month${
               totals.unpaid_months === 1 ? "" : "s"
@@ -187,7 +191,7 @@ export function AttendanceReport({
               <tr>
                 <th>Class</th>
                 <th>Students</th>
-                <th>Present weeks</th>
+                <th>Present days</th>
                 <th>Holidays</th>
                 <th>Fee months</th>
                 <th>Unpaid</th>
@@ -207,13 +211,15 @@ export function AttendanceReport({
                         {group.class_name}
                       </Link>
                       <p className="text-xs text-[var(--muted)]">
-                        {group.billing_period === "weekly"
-                          ? "Weekly class"
-                          : "Monthly class"}
+                        {group.billing_period === "daily"
+                          ? "Daily class"
+                          : group.billing_period === "weekly"
+                            ? "Weekly class"
+                            : "Monthly class"}
                       </p>
                     </td>
                     <td>{row.students}</td>
-                    <td>{weekCountLabel(row.present_weeks)}</td>
+                    <td>{dayCountLabel(row.present_weeks)}</td>
                     <td>{row.holiday_weeks}</td>
                     <td>
                       <FeeMonthCell
@@ -227,7 +233,7 @@ export function AttendanceReport({
                     </td>
                     <td>
                       {row.monthly && row.leftover_days > 0
-                        ? weekCountLabel(row.leftover_days)
+                        ? dayCountLabel(row.leftover_days)
                         : "—"}
                     </td>
                   </tr>
@@ -243,7 +249,7 @@ export function AttendanceReport({
               <tr>
                 <th>Student</th>
                 {!classId ? <th>Class</th> : null}
-                <th>Present weeks</th>
+                <th>Present days</th>
                 <th>Class holidays</th>
                 <th>Fee months</th>
                 <th>Unpaid</th>
@@ -260,7 +266,11 @@ export function AttendanceReport({
                         className="bg-[var(--surface)] text-xs font-semibold uppercase tracking-wide text-[var(--muted)]"
                       >
                         {group.class_name}
-                        {group.billing_period === "weekly" ? " · Weekly" : ""}
+                        {group.billing_period === "daily"
+                          ? " · Daily"
+                          : group.billing_period === "weekly"
+                            ? " · Weekly"
+                            : ""}
                       </td>
                     </tr>
                   ) : null;
@@ -278,10 +288,14 @@ export function AttendanceReport({
                     {!classId ? (
                       <td className="text-sm text-[var(--muted)]">
                         {row.class_name}
-                        {row.billing_period === "weekly" ? " · W" : ""}
+                        {row.billing_period === "daily"
+                          ? " · D"
+                          : row.billing_period === "weekly"
+                            ? " · W"
+                            : ""}
                       </td>
                     ) : null}
-                    <td>{weekCountLabel(row.present_weeks)}</td>
+                    <td>{dayCountLabel(row.present_weeks)}</td>
                     <td>{row.holiday_weeks}</td>
                     <td>
                       <FeeMonthCell
@@ -298,7 +312,7 @@ export function AttendanceReport({
                     </td>
                     <td>
                       {row.billing_period === "monthly" && row.leftover_days > 0
-                        ? weekCountLabel(row.leftover_days)
+                        ? dayCountLabel(row.leftover_days)
                         : "—"}
                     </td>
                   </tr>

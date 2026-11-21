@@ -22,7 +22,9 @@ export function ClassForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>(
-    initial?.billing_period === "weekly" ? "weekly" : "monthly",
+    initial?.billing_period === "weekly" || initial?.billing_period === "daily"
+      ? initial.billing_period
+      : "monthly",
   );
 
   return (
@@ -82,19 +84,27 @@ export function ClassForm({
             className="field"
             name="billing_period"
             value={billingPeriod}
-            onChange={(e) =>
-              setBillingPeriod(e.target.value === "weekly" ? "weekly" : "monthly")
-            }
+            onChange={(e) => {
+              const value = e.target.value;
+              setBillingPeriod(
+                value === "weekly" || value === "daily" ? value : "monthly",
+              );
+            }}
           >
-            <option value="monthly">Monthly</option>
+            <option value="monthly">Monthly · 4 class days</option>
             <option value="weekly">Weekly</option>
+            <option value="daily">Daily · pay attended days</option>
           </select>
         </div>
       </div>
 
       <div>
         <label className="mb-1.5 block text-sm font-medium" htmlFor="class-fee">
-          {billingPeriod === "weekly" ? "Weekly fee (LKR)" : "Monthly fee (LKR)"}
+          {billingPeriod === "daily"
+            ? "Daily fee (LKR)"
+            : billingPeriod === "weekly"
+              ? "Weekly fee (LKR)"
+              : "Monthly fee (LKR)"}
         </label>
         <input
           id="class-fee"

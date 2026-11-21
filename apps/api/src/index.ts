@@ -17,6 +17,7 @@ import {
   getAnnualStats,
   getClass,
   getClassAnnualStats,
+  getClassDayHoliday,
   getClassHoliday,
   getClassMonthlyStats,
   getMonthlyIncomeForYear,
@@ -143,7 +144,23 @@ app.get(
       });
       return;
     }
-    res.json(await listStudentsByClass(id, year, month, week));
+    const date = String(req.query.date || "");
+    const classDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
+    const cls = await getClass(id);
+    const daily = cls?.billing_period === "daily" && classDate;
+    const [dayYear, dayMonth] = classDate
+      ? classDate.split("-").map(Number)
+      : [year, month];
+    res.json(
+      await listStudentsByClass(
+        id,
+        daily ? dayYear : year,
+        daily ? dayMonth : month,
+        daily ? 0 : week,
+        classDate,
+        daily && classDate ? Number(classDate.replaceAll("-", "")) : undefined,
+      ),
+    );
   }),
 );
 
@@ -195,6 +212,11 @@ app.get(
   "/api/classes/:id/holiday",
   asyncHandler(async (req, res) => {
     const id = parsePositiveInt(req.params.id);
+    const date = String(req.query.date || "");
+    if (id && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.json((await getClassDayHoliday(id, date)) ?? null);
+      return;
+    }
     const year = parsePositiveInt(req.query.year);
     const week = parsePositiveInt(req.query.week);
     if (!id || !year || !week) {
@@ -236,7 +258,9 @@ app.get(
         ? req.query.status
         : "all";
     const billingPeriod =
-      req.query.billingPeriod === "weekly" || req.query.billingPeriod === "monthly"
+      req.query.billingPeriod === "weekly" ||
+      req.query.billingPeriod === "monthly" ||
+      req.query.billingPeriod === "daily"
         ? req.query.billingPeriod
         : undefined;
 

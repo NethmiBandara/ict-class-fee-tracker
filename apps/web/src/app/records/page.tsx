@@ -1,9 +1,13 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { DayPicker } from "@/components/DayPicker";
 import { MonthPicker } from "@/components/MonthPicker";
 import { PaymentToggle } from "@/components/PaymentToggle";
 import { WeekPicker } from "@/components/WeekPicker";
 import {
+  dailyPaymentSlot,
+  dayCountLabel,
+  formatClassDay,
   formatLKR,
   getISOWeekParts,
   monthLabel,
@@ -22,6 +26,7 @@ export default async function RecordsPage({
     year?: string;
     month?: string;
     week?: string;
+    date?: string;
     status?: string;
     classId?: string;
   }>;
@@ -37,28 +42,41 @@ export default async function RecordsPage({
     ? classes.find((c) => c.id === classId)
     : undefined;
   const isWeeklyView = selectedClass?.billing_period === "weekly";
+  const isDailyView = selectedClass?.billing_period === "daily";
 
   const monthPeriod = parsePeriod(params);
-  const weekPeriod = params.week
-    ? parseWeekPeriod(params)
-    : getISOWeekParts();
+  const weekPeriod = parseWeekPeriod(params);
+  const classDate = weekPeriod.date;
+  const classYear = Number(classDate.slice(0, 4));
+  const classMonth = Number(classDate.slice(5, 7));
 
-  const year = isWeeklyView ? weekPeriod.year : monthPeriod.year;
-  const month = isWeeklyView ? weekPeriod.month : monthPeriod.month;
+  const year = isDailyView
+    ? classYear
+    : isWeeklyView
+      ? weekPeriod.year
+      : monthPeriod.year;
+  const month = isDailyView
+    ? classMonth
+    : isWeeklyView
+      ? weekPeriod.month
+      : monthPeriod.month;
   const week = isWeeklyView ? weekPeriod.week : 0;
 
   const students = await listStudentsForPeriod(year, month, week, {
     classId: Number.isFinite(classId) ? classId : undefined,
     status,
-    billingPeriod: isWeeklyView ? "weekly" : "monthly",
+    billingPeriod: isDailyView ? "daily" : isWeeklyView ? "weekly" : "monthly",
+    paymentSlot: isDailyView ? dailyPaymentSlot(classDate) : undefined,
   });
 
   const paidCount = students.filter((s) => s.is_paid).length;
   const unpaidCount = students.length - paidCount;
   const income = students.reduce((sum, s) => sum + (s.paid_amount ?? 0), 0);
-  const periodText = isWeeklyView
-    ? weekLabel(year, week)
-    : monthLabel(year, month);
+  const periodText = isDailyView
+    ? formatClassDay(classDate)
+    : isWeeklyView
+      ? weekLabel(year, week)
+      : monthLabel(year, month);
 
   function hrefFor(next: {
     status?: string;
@@ -76,7 +94,11 @@ export default async function RecordsPage({
         ? classes.find((c) => c.id === nextClassId)
         : undefined;
 
-    if (nextClass?.billing_period === "weekly") {
+    if (nextClass?.billing_period === "daily") {
+      q.set("date", classDate);
+      q.set("year", String(classYear));
+      q.set("classId", String(nextClass.id));
+    } else if (nextClass?.billing_period === "weekly") {
       const w = week > 0 ? { year, week } : getISOWeekParts();
       q.set("year", String(w.year));
       q.set("week", String(w.week));
@@ -108,11 +130,17 @@ export default async function RecordsPage({
             <p className="mt-1 text-[var(--muted)]">
               {periodText} · {paidCount} paid · {unpaidCount} unpaid ·{" "}
               {formatLKR(income)} collected
-              {isWeeklyView ? " · weekly class" : " · monthly classes"}
+              {isDailyView
+                ? " · daily class"
+                : isWeeklyView
+                  ? " · weekly class"
+                  : " · monthly classes"}
             </p>
           </div>
           <Suspense fallback={null}>
-            {isWeeklyView ? (
+            {isDailyView ? (
+              <DayPicker date={classDate} />
+            ) : isWeeklyView ? (
               <WeekPicker
                 year={year}
                 week={week}
@@ -171,7 +199,11 @@ export default async function RecordsPage({
                 }`}
               >
                 {c.name}
-                {c.billing_period === "weekly" ? " · W" : ""}
+                {c.billing_period === "weekly"
+                  ? " · W"
+                  : c.billing_period === "daily"
+                    ? " · D"
+                    : ""}
               </Link>
             ))}
           </div>
@@ -182,8 +214,8 @@ export default async function RecordsPage({
         {students.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-[var(--muted)]">
             No matching students for this filter.
-            {!isWeeklyView
-              ? " Select a weekly class to view week-by-week payments."
+            {!isWeeklyView && !isDailyView
+              ? " Select a daily or weekly class to view one period at a time."
               : ""}
           </p>
         ) : (
@@ -210,9 +242,11 @@ export default async function RecordsPage({
                     <td>
                       <Link
                         href={
-                          s.billing_period === "weekly"
-                            ? `/classes/${s.class_id}?year=${year}&week=${week}`
-                            : `/classes/${s.class_id}?year=${year}&month=${month}`
+                          s.billing_period === "daily"
+                            ? `/classes/${s.class_id}?date=${classDate}`
+                            : s.billing_period === "weekly"
+                              ? `/classes/${s.class_id}?year=${year}&week=${week}`
+                              : `/classes/${s.class_id}?year=${year}&month=${month}`
                         }
                         className="hover:text-[var(--accent)]"
                       >
@@ -225,7 +259,24 @@ export default async function RecordsPage({
                         : formatLKR(s.monthly_fee)}
                     </td>
                     <td>
-                      {s.is_paid ? (
+                      {isDailyView ? (
+                        <div>
+                          {(s.unpaid_slots?.length ?? 0) > 0 ? (
+                            <span className="badge badge-unpaid">
+                              {dayCountLabel(s.unpaid_slots?.length ?? 0)} unpaid
+                            </span>
+                          ) : (s.paid_slots?.length ?? 0) > 0 ? (
+                            <span className="badge badge-paid">Paid up</span>
+                          ) : (
+                            <span className="badge badge-inactive">No days yet</span>
+                          )}
+                          <p className="mt-1.5 text-xs text-[var(--muted)]">
+                            {s.is_paid
+                              ? `This day paid on ${s.paid_on}`
+                              : "This day not paid"}
+                          </p>
+                        </div>
+                      ) : s.is_paid ? (
                         <div>
                           <span className="badge badge-paid">Paid</span>
                           <p className="mt-1.5 text-sm font-medium">
@@ -250,8 +301,16 @@ export default async function RecordsPage({
                         isPaid={Boolean(s.is_paid)}
                         defaultAmount={s.monthly_fee}
                         paidOn={s.paid_on}
-                        periodLabel={isWeeklyView ? "this week" : "unpaid months"}
-                        mode={isWeeklyView ? "weekly" : "monthly"}
+                        periodLabel={
+                          isDailyView
+                            ? "this class day"
+                            : isWeeklyView
+                              ? "this week"
+                              : "unpaid months"
+                        }
+                        mode={isDailyView ? "daily" : isWeeklyView ? "weekly" : "monthly"}
+                        slot={isDailyView ? dailyPaymentSlot(classDate) : 0}
+                        classDate={isDailyView ? classDate : undefined}
                         unpaidSlots={s.unpaid_slots ?? []}
                         paidSlots={s.paid_slots ?? []}
                         leftoverDates={s.leftover_dates ?? []}

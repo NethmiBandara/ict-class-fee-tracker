@@ -1,5 +1,11 @@
 import { sqlAll, sqlGet, sqlRun, type BillingPeriod } from "./db";
-import { defaultAttendedOn, getISOWeekMonday, getISOWeekParts } from "./format";
+import {
+  dailyPaymentSlot,
+  dailySlotToDate,
+  defaultAttendedOn,
+  getISOWeekMonday,
+  getISOWeekParts,
+} from "./format";
 
 export type ActionResult =
   | { ok: true; id?: number }
@@ -16,7 +22,31 @@ function parseStudentNames(raw: unknown): string[] {
 }
 
 function parseBillingPeriod(raw: unknown): BillingPeriod {
-  return raw === "weekly" ? "weekly" : "monthly";
+  if (raw === "weekly" || raw === "daily") return raw;
+  return "monthly";
+}
+
+function dailyPeriod(classDate: string) {
+  const [year, month] = classDate.split("-").map(Number);
+  return {
+    year,
+    month,
+    week: 0,
+    slot: dailyPaymentSlot(classDate),
+  };
+}
+
+function dailyPeriodsFrom(
+  periods: PaymentPeriod[],
+  classDate: string | null,
+): PaymentPeriod[] {
+  const dates = new Set<string>();
+  for (const period of periods) {
+    const date = dailySlotToDate(period.slot);
+    if (date) dates.add(date);
+  }
+  if (dates.size === 0 && classDate) dates.add(classDate);
+  return [...dates].map((date) => dailyPeriod(date));
 }
 
 export async function createClass(input: {
@@ -147,10 +177,17 @@ function parseISODate(raw: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
-async function isHolidayWeek(classId: number, year: number, week: number) {
+async function isHolidayDate(classId: number, attendedOn: string) {
+  const { year, week } = getISOWeekParts(new Date(`${attendedOn}T00:00:00`));
   const row = await sqlGet<{ id: number }>(
-    `SELECT id FROM class_holidays WHERE class_id = ? AND year = ? AND week = ?`,
-    [classId, year, week],
+    `SELECT id
+     FROM class_holidays
+     WHERE class_id = ?
+       AND (
+         holiday_on = ?
+         OR (holiday_on IS NULL AND year = ? AND week = ?)
+       )`,
+    [classId, attendedOn, year, week],
   );
   return Boolean(row);
 }
@@ -187,15 +224,18 @@ export async function setAttendance(input: {
   if (!student) return { ok: false, error: "Student not found." };
 
   if (!attended) {
-    await sqlRun(
-      `DELETE FROM attendance WHERE student_id = ? AND year = ? AND week = ?`,
-      [studentId, year, week],
-    );
+    if (attendedOn) {
+      await sqlRun(
+        `DELETE FROM attendance WHERE student_id = ? AND attended_on = ?`,
+        [studentId, attendedOn],
+      );
+    } else {
+      await sqlRun(
+        `DELETE FROM attendance WHERE student_id = ? AND year = ? AND week = ?`,
+        [studentId, year, week],
+      );
+    }
     return { ok: true };
-  }
-
-  if (await isHolidayWeek(student.class_id, year, week)) {
-    return { ok: false, error: "This week is a holiday and does not count toward fees." };
   }
 
   const onDate = attendedOn || defaultAttendedOn(year, week);
@@ -203,13 +243,19 @@ export async function setAttendance(input: {
     return { ok: false, error: "Attendance date must be YYYY-MM-DD." };
   }
 
+  if (await isHolidayDate(student.class_id, onDate)) {
+    return { ok: false, error: "This day is a holiday and does not count toward fees." };
+  }
+
+  const onParts = getISOWeekParts(new Date(`${onDate}T00:00:00`));
   await sqlRun(
     `INSERT INTO attendance (student_id, year, week, attended, attended_on)
      VALUES (?, ?, ?, 1, ?)
-     ON CONFLICT(student_id, year, week) DO UPDATE SET
+     ON CONFLICT(student_id, attended_on) DO UPDATE SET
        attended = 1,
-       attended_on = excluded.attended_on`,
-    [studentId, year, week, onDate],
+       year = excluded.year,
+       week = excluded.week`,
+    [studentId, onParts.year, onParts.week, onDate],
   );
   return { ok: true };
 }
@@ -230,9 +276,6 @@ export async function setAttendanceByDate(input: {
 
   if (!classId) return { ok: false, error: "Class is required." };
   if (!attendedOn) return { ok: false, error: "Pick the class date." };
-  if (ids.length === 0) {
-    return { ok: false, error: "Select at least one student who was present." };
-  }
 
   const cls = await sqlGet<{ id: number }>(
     `SELECT id FROM classes WHERE id = ?`,
@@ -240,9 +283,8 @@ export async function setAttendanceByDate(input: {
   );
   if (!cls) return { ok: false, error: "Class not found." };
 
-  const { year, week } = getISOWeekParts(new Date(`${attendedOn}T00:00:00`));
-  if (await isHolidayWeek(classId, year, week)) {
-    return { ok: false, error: "This week is a holiday and does not count toward fees." };
+  if (await isHolidayDate(classId, attendedOn)) {
+    return { ok: false, error: "This day is a holiday and does not count toward fees." };
   }
 
   const members = await sqlAll<{ id: number }>(
@@ -250,16 +292,18 @@ export async function setAttendanceByDate(input: {
     [classId],
   );
   const allowed = new Set(members.map((row) => row.id));
+  const present = new Set(ids);
 
-  for (const studentId of ids) {
+  for (const studentId of present) {
     if (!allowed.has(studentId)) {
       return { ok: false, error: "One of the selected students is not in this class." };
     }
+  }
+
+  for (const member of members) {
     const result = await setAttendance({
-      student_id: studentId,
-      year,
-      week,
-      attended: 1,
+      student_id: member.id,
+      attended: present.has(member.id) ? 1 : 0,
       attended_on: attendedOn,
     });
     if (!result.ok) return result;
@@ -272,16 +316,26 @@ export async function setClassHoliday(input: {
   class_id?: unknown;
   year?: unknown;
   week?: unknown;
+  holiday_on?: unknown;
   holiday?: unknown;
+  clear_week?: unknown;
   note?: unknown;
 }): Promise<ActionResult> {
   const classId = Number(input.class_id);
-  const year = Number(input.year);
-  const week = Number(input.week);
+  const holidayOn = parseISODate(input.holiday_on);
+  const fromDate = holidayOn
+    ? getISOWeekParts(new Date(`${holidayOn}T00:00:00`))
+    : null;
+  const year = fromDate?.year ?? Number(input.year);
+  const week = fromDate?.week ?? Number(input.week);
   const holiday =
     input.holiday === true ||
     input.holiday === 1 ||
     input.holiday === "1";
+  const clearWeek =
+    input.clear_week === true ||
+    input.clear_week === 1 ||
+    input.clear_week === "1";
   const note = String(input.note || "").trim() || null;
 
   if (!classId || !year || !Number.isFinite(week) || week < 1 || week > 53) {
@@ -295,17 +349,52 @@ export async function setClassHoliday(input: {
   if (!cls) return { ok: false, error: "Class not found." };
 
   if (!holiday) {
+    if (holidayOn) {
+      await sqlRun(
+        `DELETE FROM class_holidays WHERE class_id = ? AND holiday_on = ?`,
+        [classId, holidayOn],
+      );
+    }
+    if (!holidayOn || clearWeek) {
+      await sqlRun(
+        `DELETE FROM class_holidays
+         WHERE class_id = ? AND holiday_on IS NULL AND year = ? AND week = ?`,
+        [classId, year, week],
+      );
+    }
+    return { ok: true };
+  }
+
+  if (holidayOn) {
     await sqlRun(
-      `DELETE FROM class_holidays WHERE class_id = ? AND year = ? AND week = ?`,
-      [classId, year, week],
+      `INSERT INTO class_holidays (class_id, year, week, holiday_on, note)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(class_id, holiday_on) DO UPDATE SET
+         year = excluded.year,
+         week = excluded.week,
+         note = excluded.note`,
+      [classId, year, week, holidayOn, note],
     );
     return { ok: true };
   }
 
+  const existing = await sqlGet<{ id: number }>(
+    `SELECT id
+     FROM class_holidays
+     WHERE class_id = ? AND holiday_on IS NULL AND year = ? AND week = ?`,
+    [classId, year, week],
+  );
+  if (existing) {
+    await sqlRun(`UPDATE class_holidays SET note = ? WHERE id = ?`, [
+      note,
+      existing.id,
+    ]);
+    return { ok: true };
+  }
+
   await sqlRun(
-    `INSERT INTO class_holidays (class_id, year, week, note)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(class_id, year, week) DO UPDATE SET note = excluded.note`,
+    `INSERT INTO class_holidays (class_id, year, week, holiday_on, note)
+     VALUES (?, ?, ?, NULL, ?)`,
     [classId, year, week, note],
   );
   return { ok: true };
@@ -364,6 +453,7 @@ export async function markPaid(input: {
   amount?: unknown;
   note?: unknown;
   paid_on?: unknown;
+  class_date?: unknown;
 }): Promise<ActionResult> {
   const studentId = Number(input.student_id);
   const year = Number(input.year);
@@ -407,7 +497,13 @@ export async function markPaid(input: {
     periods: input.periods,
   });
 
-  if (student.billing_period === "weekly") {
+  const classDate = parseISODate(input.class_date) || dailySlotToDate(Number(input.slot));
+  if (student.billing_period === "daily") {
+    periods = dailyPeriodsFrom(periods, classDate);
+    if (periods.length === 0) {
+      return { ok: false, error: "Select at least one present day to pay." };
+    }
+  } else if (student.billing_period === "weekly") {
     const week = weekRaw;
     if (!Number.isFinite(week) || week < 1 || week > 53) {
       return { ok: false, error: "Valid week is required for weekly classes." };
@@ -433,7 +529,7 @@ export async function markPaid(input: {
     amountRaw !== undefined &&
     String(amountRaw).trim() !== ""
       ? Number(amountRaw)
-      : student.monthly_fee * (student.billing_period === "weekly" ? 1 : periods.length);
+      : student.monthly_fee * periods.length;
 
   if (!Number.isFinite(amount) || amount < 0) {
     return { ok: false, error: "Invalid payment amount." };
@@ -485,6 +581,7 @@ export async function markUnpaid(input: {
   week?: unknown;
   slot?: unknown;
   periods?: unknown;
+  class_date?: unknown;
 }): Promise<ActionResult> {
   const studentId = Number(input.student_id);
   const year = Number(input.year);
@@ -513,7 +610,13 @@ export async function markUnpaid(input: {
     periods: input.periods,
   });
 
-  if (student.billing_period === "weekly") {
+  const classDate = parseISODate(input.class_date) || dailySlotToDate(Number(input.slot));
+  if (student.billing_period === "daily") {
+    periods = dailyPeriodsFrom(periods, classDate);
+    if (periods.length === 0) {
+      return { ok: false, error: "Select at least one class day to remove." };
+    }
+  } else if (student.billing_period === "weekly") {
     const week = weekRaw;
     if (!Number.isFinite(week) || week < 1 || week > 53) {
       return { ok: false, error: "Valid week is required." };

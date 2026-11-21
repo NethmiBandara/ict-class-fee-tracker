@@ -9,13 +9,13 @@ import {
   markUnpaid,
 } from "@/lib/actions";
 import {
+  dayCountLabel,
   formatAttendanceDay,
   formatLKR,
   monthLabel,
   SHORT_MONTHS,
   slotPresentWeeks,
   slotUpcomingWeeks,
-  weekCountLabel,
   WEEKS_PER_FEE_MONTH,
 } from "@/lib/format";
 import type { FeeSlot, StudentBilling } from "@/lib/types";
@@ -68,6 +68,8 @@ export function PaymentToggle({
   year,
   month,
   week = 0,
+  slot = 0,
+  classDate,
   isPaid,
   defaultAmount,
   paidOn,
@@ -83,11 +85,13 @@ export function PaymentToggle({
   year: number;
   month: number;
   week?: number;
+  slot?: number;
+  classDate?: string;
   isPaid: boolean;
   defaultAmount: number;
   paidOn?: string | null;
   periodLabel?: string;
-  mode?: "weekly" | "monthly";
+  mode?: "weekly" | "monthly" | "daily";
   unpaidSlots?: FeeSlot[];
   paidSlots?: FeeSlot[];
   leftoverDates?: string[];
@@ -95,7 +99,7 @@ export function PaymentToggle({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [paidDate, setPaidDate] = useState(paidOn || todayLocal());
+  const [paidDate, setPaidDate] = useState(paidOn || classDate || todayLocal());
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [billing, setBilling] = useState<StudentBilling | null>(null);
@@ -151,6 +155,8 @@ export function PaymentToggle({
     fd.set("year", String(year));
     fd.set("month", String(month));
     fd.set("week", String(week));
+    fd.set("slot", String(slot));
+    if (classDate) fd.set("class_date", classDate);
     return fd;
   }
 
@@ -165,7 +171,7 @@ export function PaymentToggle({
         setBilling(data);
         setSelected(data.slots.map(slotId));
       } catch {
-        setError("Could not load unpaid weeks.");
+        setError("Could not load fee months.");
       }
     });
   }
@@ -192,12 +198,14 @@ export function PaymentToggle({
                 id={`pay-title-${studentId}`}
                 className="text-lg font-semibold"
               >
-                {mode === "monthly" ? `Pay ${studentName}` : "Save payment"}
+                {mode === "weekly" ? "Save payment" : `Pay ${studentName}`}
               </h3>
               <p className="mt-1 text-sm text-[var(--muted)]">
                 {mode === "monthly"
-                  ? "4 present weeks = 1 paying month. You can pay early — upcoming present weeks fill that paid month. Holiday and absent weeks are not included."
-                  : `Student name and paying date will be stored for ${periodLabel}.`}
+                  ? "4 present class days = 1 paying month. Days in the same week are counted separately. You can pay early — upcoming class days fill that paid month. Holidays and absent days are not included."
+                  : mode === "daily"
+                    ? "Mark attendance first. Then pay one present day, or several days in the same payment. Each selected day is marked paid."
+                    : `Student name and paying date will be stored for ${periodLabel}.`}
               </p>
 
               <div className="mt-4 space-y-3">
@@ -233,7 +241,7 @@ export function PaymentToggle({
                     <div className="pay-summary">
                       <div className="pay-summary-card">
                         <p className="text-xs text-[var(--muted)]">Unpaid now</p>
-                        <strong>{weekCountLabel(unpaidWeeks)}</strong>
+                        <strong>{dayCountLabel(unpaidWeeks)}</strong>
                         <p className="mt-0.5 text-xs text-[var(--muted)]">
                           {`${slots.filter((slot) => !slot.paid).length} fee month${
                             slots.filter((slot) => !slot.paid).length === 1 ? "" : "s"
@@ -242,11 +250,11 @@ export function PaymentToggle({
                       </div>
                       <div className="pay-summary-card">
                         <p className="text-xs text-[var(--muted)]">Already paid</p>
-                        <strong>{weekCountLabel(paidWeeks)}</strong>
+                        <strong>{dayCountLabel(paidWeeks)}</strong>
                         <p className="mt-0.5 text-xs text-[var(--muted)]">
                           {remainingAfterPay === 0 && unpaidWeeks === 0
                             ? "Nothing remaining to pay"
-                            : `${weekCountLabel(remainingAfterPay)} remaining after this`}
+                            : `${dayCountLabel(remainingAfterPay)} remaining after this`}
                         </p>
                       </div>
                     </div>
@@ -254,11 +262,11 @@ export function PaymentToggle({
                     {payingWeeks > 0 ? (
                       <div className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3">
                         <p className="text-sm font-semibold text-[var(--accent-strong)]">
-                          Paying {weekCountLabel(payingWeeks)} now
+                          Paying {dayCountLabel(payingWeeks)} now
                         </p>
                         <p className="mt-0.5 text-xs text-[var(--muted)]">
                           {payingSlots.some((slot) => slotUpcomingWeeks(slot) > 0)
-                            ? "Present days so far. Upcoming present weeks will complete this month."
+                            ? "Present days so far. Upcoming class days will complete this month."
                             : "These are the class days covered by this payment"}
                         </p>
                         <div className="mt-2">
@@ -274,17 +282,17 @@ export function PaymentToggle({
                           Amount {formatLKR(amount || defaultAmount * payingSlots.length)}
                         </p>
                         <p className="text-xs text-[var(--muted)]">
-                          After save: {weekCountLabel(paidWeeks + payingWeeks)} paid
+                          After save: {dayCountLabel(paidWeeks + payingWeeks)} paid
                           {" · "}
-                          {weekCountLabel(remainingAfterPay)} remaining to pay
+                          {dayCountLabel(remainingAfterPay)} remaining to pay
                           {payingSlots.some((slot) => slotUpcomingWeeks(slot) > 0)
-                            ? ` · upcoming weeks complete this month`
+                            ? ` · upcoming class days complete this month`
                             : ""}
                         </p>
                       </div>
                     ) : billing ? (
                       <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)]">
-                        Select unpaid weeks below to pay them.
+                        Select unpaid days below to pay them.
                       </p>
                     ) : null}
 
@@ -292,7 +300,7 @@ export function PaymentToggle({
                       <p className="mb-1 text-sm font-medium">Fee months</p>
                       {billing ? (
                         <p className="mb-2 text-xs text-[var(--muted)]">
-                          {weekCountLabel(billing.attendance_days)} present
+                          {dayCountLabel(billing.attendance_days)} present
                           {" · "}
                           {`${billing.billable_months} complete month${
                             billing.billable_months === 1 ? "" : "s"
@@ -300,13 +308,13 @@ export function PaymentToggle({
                         </p>
                       ) : (
                         <p className="mb-2 text-xs text-[var(--muted)]">
-                          Loading weeks…
+                          Loading class days…
                         </p>
                       )}
                       <div className="month-check-list">
                         {slots.length === 0 ? (
                           <p className="text-sm text-[var(--muted)]">
-                            No payable weeks yet. Add a month below if they are
+                            No class days to pay yet. Add a month below if they are
                             paying late or in advance.
                           </p>
                         ) : (
@@ -332,8 +340,8 @@ export function PaymentToggle({
                                   </span>
                                   <span className="text-xs text-[var(--muted)]">
                                     {upcoming > 0
-                                      ? `${present} of ${WEEKS_PER_FEE_MONTH} weeks`
-                                      : weekCountLabel(weeks)}
+                                      ? `${present} of ${WEEKS_PER_FEE_MONTH} days`
+                                      : dayCountLabel(weeks)}
                                   </span>
                                 </span>
                                 <span className="mt-1.5 block">
@@ -344,7 +352,7 @@ export function PaymentToggle({
                                     />
                                   ) : (
                                     <p className="text-xs text-[var(--muted)]">
-                                      Upcoming present weeks will complete this
+                                      Upcoming class days will complete this
                                       month
                                     </p>
                                   )}
@@ -352,8 +360,8 @@ export function PaymentToggle({
                                 {upcoming > 0 ? (
                                   <span className="mt-1 block text-xs text-[var(--muted)]">
                                     {slot.paid
-                                      ? `${weekCountLabel(upcoming)} upcoming will be added to complete this month`
-                                      : `Pay now · ${weekCountLabel(upcoming)} upcoming will complete this month`}
+                                      ? `${dayCountLabel(upcoming)} upcoming will be added to complete this month`
+                                      : `Pay now · ${dayCountLabel(upcoming)} upcoming will complete this month`}
                                   </span>
                                 ) : null}
                                 {slot.paid && slot.paid_on ? (
@@ -403,10 +411,10 @@ export function PaymentToggle({
                     !slots.some((slot) => !slot.paid && slotUpcomingWeeks(slot) > 0) ? (
                       <div className="rounded-xl border border-[#f0d37a] bg-[var(--gold-soft)] p-3">
                         <p className="text-sm font-medium">
-                          {weekCountLabel(leftoverWeeks)} toward next month
+                          {dayCountLabel(leftoverWeeks)} toward next month
                         </p>
                         <p className="mt-0.5 text-xs text-[var(--muted)]">
-                          Upcoming present weeks will complete this fee month
+                            Upcoming class days will complete this fee month
                         </p>
                         <div className="mt-2">
                           <DayChips days={leftoverDates} tone="next" />
@@ -491,6 +499,111 @@ export function PaymentToggle({
                       </button>
                     </div>
                   </div>
+                ) : mode === "daily" ? (
+                  <div className="space-y-3">
+                    <div className="pay-summary">
+                      <div className="pay-summary-card">
+                        <p className="text-xs text-[var(--muted)]">Unpaid days</p>
+                        <strong>
+                          {dayCountLabel(slots.filter((slot) => !slot.paid).length)}
+                        </strong>
+                      </div>
+                      <div className="pay-summary-card">
+                        <p className="text-xs text-[var(--muted)]">Already paid</p>
+                        <strong>
+                          {dayCountLabel(slots.filter((slot) => slot.paid).length)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {payingSlots.length > 0 ? (
+                      <div className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3">
+                        <p className="text-sm font-semibold text-[var(--accent-strong)]">
+                          Paying {dayCountLabel(payingSlots.length)} now
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--muted)]">
+                          One payment covers these present days. Each day is marked paid.
+                        </p>
+                        <div className="mt-2">
+                          <DayChips days={payingDays} tone="due" />
+                        </div>
+                        <p className="mt-2 text-sm font-medium">
+                          Amount {formatLKR(defaultAmount * payingSlots.length)}
+                        </p>
+                      </div>
+                    ) : billing ? (
+                      <p className="rounded-xl border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)]">
+                        {slots.length === 0
+                          ? "No present days yet. Mark attendance, then come back to pay."
+                          : "Select unpaid days to pay them, or clear a paid day to undo it."}
+                      </p>
+                    ) : null}
+
+                    <div>
+                      <p className="mb-1 text-sm font-medium">Present days</p>
+                      {billing ? (
+                        <p className="mb-2 text-xs text-[var(--muted)]">
+                          {dayCountLabel(billing.attendance_days)} present ·{" "}
+                          {formatLKR(defaultAmount)} each
+                        </p>
+                      ) : (
+                        <p className="mb-2 text-xs text-[var(--muted)]">
+                          Loading present days…
+                        </p>
+                      )}
+                      <div className="month-check-list">
+                        {slots.length === 0 ? (
+                          <p className="text-sm text-[var(--muted)]">
+                            No present days to pay yet.
+                          </p>
+                        ) : (
+                          slots.map((slot) => {
+                            const id = slotId(slot);
+                            const day = slot.days?.[0];
+                            return (
+                              <label
+                                key={id}
+                                className={`month-check ${slot.paid ? "month-check-paid" : ""}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selected.includes(id)}
+                                  onChange={() => {
+                                    setSelected((current) =>
+                                      current.includes(id)
+                                        ? current.filter((value) => value !== id)
+                                        : [...current, id],
+                                    );
+                                  }}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-wrap items-center gap-2">
+                                    <span className="font-medium">
+                                      {day ? formatAttendanceDay(day) : "Class day"}
+                                    </span>
+                                    <span
+                                      className={`badge ${slot.paid ? "badge-paid" : "badge-unpaid"}`}
+                                    >
+                                      {slot.paid ? "Paid" : "Unpaid"}
+                                    </span>
+                                  </span>
+                                  <span className="mt-1 block text-xs text-[var(--muted)]">
+                                    {slot.paid && slot.paid_on
+                                      ? `Paid on ${slot.paid_on}${
+                                          slot.amount != null
+                                            ? ` · ${formatLKR(slot.amount)}`
+                                            : ""
+                                        }`
+                                      : formatLKR(defaultAmount)}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div>
                     <label className="mb-1 block text-sm font-medium">
@@ -519,14 +632,14 @@ export function PaymentToggle({
                   disabled={
                     pending ||
                     !paidDate ||
-                    (mode === "monthly" && !hasPaymentChange)
+                    ((mode === "monthly" || mode === "daily") && !hasPaymentChange)
                   }
                   onClick={() => {
                     startTransition(async () => {
                       try {
                         const fd = baseFormData();
                         fd.set("paid_on", paidDate);
-                        if (mode === "monthly") {
+                        if (mode === "monthly" || mode === "daily") {
                           if (removingSlots.length) {
                             const remove = baseFormData();
                             remove.set(
@@ -589,11 +702,15 @@ export function PaymentToggle({
                 >
                   {pending
                     ? "Saving…"
-                    : mode === "monthly"
-                      ? payingWeeks > 0
-                        ? `Pay ${weekCountLabel(payingWeeks)}`
-                        : "Save payment"
-                      : "Save payment"}
+                    : mode === "daily"
+                      ? payingSlots.length > 0
+                        ? `Pay ${dayCountLabel(payingSlots.length)}`
+                        : "Update payment"
+                      : mode === "monthly"
+                        ? payingWeeks > 0
+                          ? `Pay ${dayCountLabel(payingWeeks)}`
+                          : "Save payment"
+                        : "Save payment"}
                 </button>
               </div>
             </div>
@@ -610,7 +727,12 @@ export function PaymentToggle({
   const monthlyEarlyOnly =
     monthlyUnpaid > 0 &&
     unpaidSlots.every((slot) => slotUpcomingWeeks(slot) > 0);
-  const monthlyPaidLook = mode === "monthly" ? monthlyUnpaid === 0 : isPaid;
+  const monthlyPaidLook =
+    mode === "monthly"
+      ? monthlyUnpaid === 0
+      : mode === "daily"
+        ? unpaidSlots.length === 0 && paidSlots.length > 0
+        : isPaid;
 
   return (
     <div className="w-full md:w-auto">
@@ -623,7 +745,7 @@ export function PaymentToggle({
             : "bg-[var(--accent)] text-white hover:bg-[var(--accent-strong)]"
         }`}
         onClick={() => {
-          if (mode === "monthly") {
+          if (mode === "monthly" || mode === "daily") {
             openMonthly();
             return;
           }
@@ -641,7 +763,7 @@ export function PaymentToggle({
             });
             return;
           }
-          setPaidDate(paidOn || todayLocal());
+          setPaidDate(paidOn || classDate || todayLocal());
           setOpen(true);
         }}
       >
@@ -651,11 +773,17 @@ export function PaymentToggle({
             ? monthlyUnpaidWeeks > 0
               ? monthlyEarlyOnly
                 ? "Pay early"
-                : `Pay ${weekCountLabel(monthlyUnpaidWeeks)}`
-              : "Paid · view weeks"
-            : isPaid
-              ? "Paid"
-              : "Mark paid"}
+                : `Pay ${dayCountLabel(monthlyUnpaidWeeks)}`
+              : "Paid · view days"
+            : mode === "daily"
+              ? unpaidSlots.length > 0
+                ? `Pay ${dayCountLabel(unpaidSlots.length)}`
+                : paidSlots.length > 0
+                  ? "Paid · view days"
+                  : "Mark paid"
+              : isPaid
+                ? "Paid"
+                : "Mark paid"}
       </button>
       {dialog}
     </div>
