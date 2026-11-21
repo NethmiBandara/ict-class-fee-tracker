@@ -1,27 +1,28 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AttendanceToggle } from "@/components/AttendanceToggle";
 import { ClassForm } from "@/components/ClassForm";
 import { ConfirmSubmit } from "@/components/ConfirmSubmit";
+import { DayPicker } from "@/components/DayPicker";
 import { HolidayToggle } from "@/components/HolidayToggle";
 import { PaymentToggle } from "@/components/PaymentToggle";
 import { PresentByDateForm } from "@/components/PresentByDateForm";
 import { StudentForm } from "@/components/StudentForm";
-import { WeekPicker } from "@/components/WeekPicker";
 import { deleteStudent, updateStudent } from "@/lib/actions";
 import {
+  dailyPaymentSlot,
+  dayCountLabel,
+  feeUnit,
   formatAttendanceDay,
+  formatClassDay,
   formatLKR,
   parseWeekPeriod,
   slotPresentWeeks,
   slotUpcomingWeeks,
-  weekCountLabel,
-  weekLabel,
   WEEKS_PER_FEE_MONTH,
 } from "@/lib/format";
-import type { FeeSlot } from "@/lib/types";
-import { getClass, getClassHoliday, listStudentsByClass } from "@/lib/queries";
+import type { BillingPeriod, FeeSlot } from "@/lib/types";
+import { getClass, getClassDayHoliday, listStudentsByClass } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -34,31 +35,66 @@ export default async function ClassDetailPage({
 }) {
   const { id: idRaw } = await params;
   const id = Number(idRaw);
-  if (!Number.isFinite(id)) notFound();
-
-  const cls = await getClass(id);
-  if (!cls) notFound();
+  const cls = Number.isFinite(id) ? await getClass(id) : undefined;
+  if (!cls) {
+    return (
+      <div className="space-y-4">
+        <Link href="/classes" className="text-sm text-[var(--accent)]">
+          ← All classes
+        </Link>
+        <section className="page-hero">
+          <p className="eyebrow">Class</p>
+          <h1
+            className="mt-1 text-3xl font-semibold tracking-tight"
+            style={{ fontFamily: "var(--font-display), serif" }}
+          >
+            Class not found
+          </h1>
+          <p className="mt-2 text-[var(--muted)]">
+            This class is not in the tracker. It may have been deleted.
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   const sp = await searchParams;
-  const isWeekly = cls.billing_period === "weekly";
+  const billingPeriod = cls.billing_period;
+  const isDaily = billingPeriod === "daily";
+  const isWeekly = billingPeriod === "weekly";
+  const isMonthly = billingPeriod === "monthly";
   const weekPeriod = parseWeekPeriod(sp);
   const year = weekPeriod.year;
   const month = weekPeriod.month;
   const week = weekPeriod.week;
   const date = weekPeriod.date;
+  const classYear = Number(date.slice(0, 4));
+  const classMonth = Number(date.slice(5, 7));
 
   const [students, holiday] = await Promise.all([
-    listStudentsByClass(id, year, month, week),
-    getClassHoliday(id, year, week),
+    listStudentsByClass(
+      id,
+      isDaily ? classYear : year,
+      isDaily ? classMonth : month,
+      isDaily ? 0 : week,
+      date,
+      isDaily ? dailyPaymentSlot(date) : undefined,
+    ),
+    getClassDayHoliday(id, date),
   ]);
   const isHoliday = Boolean(holiday);
+  const legacyWeekHoliday = Boolean(holiday && !holiday.holiday_on);
   const active = students.filter((s) => s.active === 1);
   const present = active.filter((s) => s.attended === 1).length;
-  const paid = isWeekly
-    ? active.filter((s) => s.is_paid === 1).length
-    : active.filter((s) => (s.unpaid_months ?? 0) === 0).length;
+  const paid = isMonthly
+    ? active.filter((s) => (s.unpaid_months ?? 0) === 0).length
+    : active.filter((s) => s.is_paid === 1).length;
   const unpaid = active.length - paid;
-  const periodText = weekLabel(year, week);
+  const owingDays = isDaily
+    ? active.filter((s) => (s.unpaid_slots?.length ?? 0) > 0).length
+    : unpaid;
+  const periodText = formatClassDay(date);
+  const payMode = isDaily ? "daily" : isWeekly ? "weekly" : "monthly";
 
   return (
     <div className="space-y-6">
@@ -71,9 +107,11 @@ export default async function ClassDetailPage({
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <p className="eyebrow">
-                  {isWeekly
-                    ? "Weekly class"
-                    : "Monthly class · 4 present weeks = 1 fee month"}
+                  {isDaily
+                    ? "Daily class · mark attendance, then pay those days"
+                    : isWeekly
+                      ? "Weekly fee · attendance is marked per class day"
+                      : "Monthly class · each class day counts · 4 days = 1 fee month"}
                 </p>
               </div>
               <h1
@@ -83,13 +121,15 @@ export default async function ClassDetailPage({
                 {cls.name}
               </h1>
               <p className="mt-1 text-[var(--muted)]">
-                Fee {formatLKR(cls.monthly_fee)}
-                {isWeekly ? " / week" : " / month"} · {periodText} · {present}{" "}
-                present · {paid} paid / {unpaid} unpaid
+                Fee {formatLKR(cls.monthly_fee)} {feeUnit(billingPeriod)} ·{" "}
+                {periodText} · {present} present
+                {isDaily
+                  ? ` · ${owingDays} with days to pay`
+                  : ` · ${paid} paid / ${unpaid} unpaid`}
               </p>
             </div>
             <Suspense fallback={null}>
-              <WeekPicker year={year} week={week} date={date} />
+              <DayPicker date={date} />
             </Suspense>
           </div>
         </div>
@@ -121,21 +161,25 @@ export default async function ClassDetailPage({
           <div>
             <h2 className="font-semibold">Add present by date</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Pick the class date and the students who attended. Absent weeks and
-              holiday weeks are not counted toward the 4-week fee month.
+              {isDaily
+                ? "Save who attended this date. Days can fall anywhere in the week. After that, pay one present day or several days together."
+                : "Save who attended this class day. A class can meet a few days in the same week, and each date is kept separately. Absent days and holidays are not counted toward the 4-day fee month."}
             </p>
           </div>
           <HolidayToggle
             classId={cls.id}
             year={year}
             week={week}
+            date={date}
             isHoliday={isHoliday}
+            legacyWeek={legacyWeekHoliday}
           />
         </div>
         {isHoliday ? (
           <p className="mb-3 rounded-lg bg-[var(--gold-soft)] px-3 py-2 text-sm text-[#7a5a00]">
-            {weekLabel(year, week)} is marked as a holiday. It will not count
-            toward any student&apos;s fee month.
+            {legacyWeekHoliday
+              ? `${formatClassDay(date)} is inside a week that was marked as a holiday. Remove that week holiday if this class still meets on other days.`
+              : `${formatClassDay(date)} is a holiday. It will not count toward fees.`}
           </p>
         ) : null}
         <PresentByDateForm
@@ -155,8 +199,9 @@ export default async function ClassDetailPage({
         <div className="border-b border-[var(--line)] px-4 py-3">
           <h2 className="font-semibold">Attendance & payments</h2>
           <p className="text-sm text-[var(--muted)]">
-            Mark who was present this week. Four present weeks make one paying
-            month. Absent or holiday weeks are skipped.
+            {isDaily
+              ? `Mark who was present on ${formatClassDay(date)}. Pay covers any present days you select, including several days in one payment.`
+              : `Mark who was present on ${formatClassDay(date)}. Other days in this week stay as they are. Four present days make one paying month.`}
           </p>
         </div>
         {students.length === 0 ? (
@@ -171,7 +216,7 @@ export default async function ClassDetailPage({
                   key={s.id}
                   className={`mobile-card ${s.active ? "" : "opacity-60"}`}
                 >
-                  <StudentSummary student={s} isWeekly={isWeekly} />
+                  <StudentSummary student={s} billingPeriod={billingPeriod} />
                   {s.active ? (
                     <div className="action-bar mt-3">
                       <AttendanceToggle
@@ -194,8 +239,12 @@ export default async function ClassDetailPage({
                         isPaid={Boolean(s.is_paid)}
                         defaultAmount={cls.monthly_fee}
                         paidOn={s.paid_on}
-                        periodLabel={isWeekly ? "this week" : "unpaid months"}
-                        mode={isWeekly ? "weekly" : "monthly"}
+                        periodLabel={
+                          isDaily ? "this class day" : isWeekly ? "this week" : "unpaid months"
+                        }
+                        mode={payMode}
+                        slot={isDaily ? dailyPaymentSlot(date) : 0}
+                        classDate={isDaily ? date : undefined}
                         unpaidSlots={s.unpaid_slots ?? []}
                         paidSlots={s.paid_slots ?? []}
                         leftoverDates={s.leftover_dates ?? []}
@@ -212,7 +261,7 @@ export default async function ClassDetailPage({
                 <thead>
                   <tr>
                     <th>Student</th>
-                    <th>This week</th>
+                    <th>This day</th>
                     <th>Payment</th>
                     <th></th>
                   </tr>
@@ -225,10 +274,15 @@ export default async function ClassDetailPage({
                         <p className="text-xs text-[var(--muted)]">
                           {s.phone || "No phone"}
                         </p>
-                        {!isWeekly && s.active ? (
+                        {isMonthly && s.active ? (
                           <p className="mt-1 text-xs text-[var(--muted)]">
-                            {weekCountLabel(s.attendance_days ?? 0)} present
+                            {dayCountLabel(s.attendance_days ?? 0)} present
                             {openMonthProgress(s)}
+                          </p>
+                        ) : null}
+                        {isDaily && s.active ? (
+                          <p className="mt-1 text-xs text-[var(--muted)]">
+                            {dayCountLabel(s.attendance_days ?? 0)} present
                           </p>
                         ) : null}
                       </td>
@@ -251,7 +305,7 @@ export default async function ClassDetailPage({
                       <td>
                         {s.active ? (
                           <div className="space-y-2">
-                            <PaymentStatus student={s} isWeekly={isWeekly} />
+                            <PaymentStatus student={s} billingPeriod={billingPeriod} />
                             <PaymentToggle
                               studentId={s.id}
                               studentName={s.name}
@@ -262,8 +316,12 @@ export default async function ClassDetailPage({
                               isPaid={Boolean(s.is_paid)}
                               defaultAmount={cls.monthly_fee}
                               paidOn={s.paid_on}
-                              periodLabel={isWeekly ? "this week" : "unpaid months"}
-                              mode={isWeekly ? "weekly" : "monthly"}
+                              periodLabel={
+                                isDaily ? "this class day" : isWeekly ? "this week" : "unpaid months"
+                              }
+                              mode={payMode}
+                              slot={isDaily ? dailyPaymentSlot(date) : 0}
+                              classDate={isDaily ? date : undefined}
                               unpaidSlots={s.unpaid_slots ?? []}
                               paidSlots={s.paid_slots ?? []}
                               leftoverDates={s.leftover_dates ?? []}
@@ -300,12 +358,12 @@ function openMonthProgress(student: {
     (slot) => slotUpcomingWeeks(slot) > 0,
   );
   if (!open) return "";
-  return ` · ${slotPresentWeeks(open)} of ${WEEKS_PER_FEE_MONTH} weeks · ${weekCountLabel(slotUpcomingWeeks(open))} upcoming`;
+  return ` · ${slotPresentWeeks(open)} of ${WEEKS_PER_FEE_MONTH} days · ${dayCountLabel(slotUpcomingWeeks(open))} upcoming`;
 }
 
 function PaymentStatus({
   student,
-  isWeekly,
+  billingPeriod,
 }: {
   student: {
     is_paid: number;
@@ -320,12 +378,48 @@ function PaymentStatus({
     paid_slots?: FeeSlot[];
     active: number;
   };
-  isWeekly: boolean;
+  billingPeriod: BillingPeriod;
 }) {
   if (!student.active) {
     return <span className="badge badge-inactive">Inactive</span>;
   }
-  if (isWeekly) {
+  if (billingPeriod === "daily") {
+    const unpaidDays = student.unpaid_slots ?? [];
+    const paidDays = student.paid_slots ?? [];
+    const dueDays = unpaidDays.flatMap((slot) => slot.days ?? []);
+    return (
+      <div className="space-y-1.5">
+        {unpaidDays.length > 0 ? (
+          <span className="badge badge-unpaid">
+            {dayCountLabel(unpaidDays.length)} unpaid
+          </span>
+        ) : paidDays.length > 0 ? (
+          <span className="badge badge-paid">
+            {dayCountLabel(paidDays.length)} paid
+          </span>
+        ) : (
+          <span className="badge badge-inactive">No days yet</span>
+        )}
+        <p className="text-xs text-[var(--muted)]">
+          {paidDays.length > 0
+            ? `${dayCountLabel(paidDays.length)} paid`
+            : "Nothing paid yet"}
+          {unpaidDays.length > 0
+            ? ` · ${dayCountLabel(unpaidDays.length)} still to pay`
+            : paidDays.length > 0
+              ? " · nothing left to pay"
+              : ""}
+        </p>
+        {dueDays.length > 0 ? (
+          <p className="text-xs text-[var(--muted)]">
+            Days to pay: {dueDays.map(formatAttendanceDay).join(" · ")}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (billingPeriod !== "monthly") {
     if (student.is_paid) {
       return (
         <div>
@@ -361,21 +455,21 @@ function PaymentStatus({
         <span className="badge badge-unpaid">
           {upcoming > 0 && unpaidSlots.some((slot) => slotUpcomingWeeks(slot) > 0)
             ? "Pay early"
-            : `${weekCountLabel(unpaidWeeks)} unpaid`}
+            : `${dayCountLabel(unpaidWeeks)} unpaid`}
         </span>
       ) : (
         <span className="badge badge-paid">
-          {paidWeeks > 0 ? `${weekCountLabel(paidWeeks)} paid` : "Up to date"}
+          {paidWeeks > 0 ? `${dayCountLabel(paidWeeks)} paid` : "Up to date"}
         </span>
       )}
       <p className="text-xs text-[var(--muted)]">
-        Paid {weekCountLabel(paidWeeks)}
+        Paid {dayCountLabel(paidWeeks)}
         {" · "}
         {unpaidWeeks > 0
-          ? `${weekCountLabel(unpaidWeeks)} remaining to pay`
+          ? `${dayCountLabel(unpaidWeeks)} remaining to pay`
           : "nothing remaining to pay"}
         {openSlot
-          ? ` · ${present} of ${WEEKS_PER_FEE_MONTH} weeks · ${weekCountLabel(upcoming)} upcoming`
+          ? ` · ${present} of ${WEEKS_PER_FEE_MONTH} days · ${dayCountLabel(upcoming)} upcoming`
           : ""}
       </p>
       {dueDays.length > 0 ? (
@@ -393,7 +487,7 @@ function PaymentStatus({
 
 function StudentSummary({
   student,
-  isWeekly,
+  billingPeriod,
 }: {
   student: {
     id: number;
@@ -412,22 +506,27 @@ function StudentSummary({
     paid_student_name: string | null;
     paid_amount: number | null;
   };
-  isWeekly: boolean;
+  billingPeriod: BillingPeriod;
 }) {
   return (
     <div className="flex items-start justify-between gap-2">
       <div>
         <p className="font-semibold">{student.name}</p>
         <p className="text-xs text-[var(--muted)]">{student.phone || "No phone"}</p>
-        {!isWeekly && student.active ? (
+        {billingPeriod === "monthly" && student.active ? (
           <p className="mt-1 text-xs text-[var(--muted)]">
-            {weekCountLabel(student.attendance_days ?? 0)} present
+            {dayCountLabel(student.attendance_days ?? 0)} present
             {openMonthProgress(student)}
+          </p>
+        ) : null}
+        {billingPeriod === "daily" && student.active ? (
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            {dayCountLabel(student.attendance_days ?? 0)} present
           </p>
         ) : null}
         {student.active ? (
           <div className="mt-2">
-            <PaymentStatus student={student} isWeekly={isWeekly} />
+            <PaymentStatus student={student} billingPeriod={billingPeriod} />
           </div>
         ) : null}
       </div>

@@ -8,6 +8,16 @@ export function getISOWeekMonday(year: number, week: number): Date {
   return monday;
 }
 
+export function dailyPaymentSlot(iso: string): number {
+  return Number(iso.replaceAll("-", ""));
+}
+
+export function dailySlotToDate(slot: number): string | null {
+  const text = String(slot);
+  if (!/^20\d{6}$/.test(text)) return null;
+  return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+}
+
 export function toISODateUTC(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

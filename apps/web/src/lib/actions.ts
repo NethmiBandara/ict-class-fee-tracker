@@ -122,6 +122,7 @@ export async function markPaid(formData: FormData): Promise<ActionResult> {
     amount: formData.get("amount"),
     note: String(formData.get("note") || ""),
     paid_on: String(formData.get("paid_on") || ""),
+    class_date: String(formData.get("class_date") || ""),
   });
   if (result.ok) {
     revalidateAll();
@@ -148,6 +149,7 @@ export async function markUnpaid(formData: FormData): Promise<ActionResult> {
     week: Number(formData.get("week") || 0),
     slot: Number(formData.get("slot") || 0),
     periods,
+    class_date: String(formData.get("class_date") || ""),
   });
   if (result.ok) {
     revalidateAll();
@@ -201,7 +203,9 @@ export async function setClassHoliday(formData: FormData): Promise<ActionResult>
     class_id: classId,
     year: Number(formData.get("year")),
     week: Number(formData.get("week")),
+    holiday_on: String(formData.get("holiday_on") || ""),
     holiday: formData.get("holiday") === "1",
+    clear_week: formData.get("clear_week") === "1",
     note: String(formData.get("note") || ""),
   });
   if (result.ok) {

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ClassForm } from "@/components/ClassForm";
 import { ConfirmSubmit } from "@/components/ConfirmSubmit";
 import { deleteClass } from "@/lib/actions";
-import { formatLKR } from "@/lib/format";
+import { billingPeriodLabel, feeUnit, formatLKR } from "@/lib/format";
 import { listClasses } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -21,8 +21,9 @@ export default async function ClassesPage() {
           Classes & students
         </h1>
         <p className="mt-1 text-[var(--muted)]">
-          Mark weekly attendance. Four present days count as one month. Late
-          payments auto-fill those months, and you can edit them.
+          Monthly classes group 4 class days into one fee. Daily classes mark
+          attendance per day, then one payment can cover one or several of those
+          days. Late payments auto-fill monthly fees, and you can edit them.
         </p>
       </section>
 
@@ -56,20 +57,17 @@ export default async function ClassesPage() {
                         {c.name}
                       </Link>
                       <p className="mt-1 text-sm text-[var(--muted)]">
-                        {formatLKR(c.monthly_fee)}
-                        {c.billing_period === "weekly" ? " / week" : " / month"}
+                        {formatLKR(c.monthly_fee)} {feeUnit(c.billing_period)}
                         {" · "}
                         {c.active_count} active
                       </p>
                     </div>
                     <span
                       className={`badge ${
-                        c.billing_period === "weekly"
-                          ? "badge-unpaid"
-                          : "badge-paid"
+                        c.billing_period === "monthly" ? "badge-paid" : "badge-unpaid"
                       }`}
                     >
-                      {c.billing_period === "weekly" ? "Weekly" : "Monthly"}
+                      {billingPeriodLabel(c.billing_period)}
                     </span>
                   </div>
                   <div className="action-bar mt-3">
@@ -115,18 +113,19 @@ export default async function ClassesPage() {
                       <td>
                         <span
                           className={`badge ${
-                            c.billing_period === "weekly"
-                              ? "badge-unpaid"
-                              : "badge-paid"
+                            c.billing_period === "monthly"
+                              ? "badge-paid"
+                              : "badge-unpaid"
                           }`}
                         >
-                          {c.billing_period === "weekly" ? "Weekly" : "Monthly"}
+                          {billingPeriodLabel(c.billing_period)}
                         </span>
                       </td>
                       <td>
                         {formatLKR(c.monthly_fee)}
                         <span className="text-xs text-[var(--muted)]">
-                          {c.billing_period === "weekly" ? " / week" : " / month"}
+                          {" "}
+                          {feeUnit(c.billing_period)}
                         </span>
                       </td>
                       <td>

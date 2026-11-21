@@ -113,15 +113,15 @@ export default async function ReportsPage({
 
       <section className="grid gap-3 sm:grid-cols-2">
         <StatCard
-          label="Present weeks"
+          label="Present days"
           value={String(presentWeeks)}
-          hint="Counted toward fee months in this year"
+          hint="Each class day is counted, including several days in one week"
           tone="accent"
         />
         <StatCard
           label="Unpaid fee months"
           value={String(unpaidFeeMonths)}
-          hint="From 4 present weeks = 1 paying month"
+          hint="From 4 present class days = 1 paying month"
           tone="warn"
         />
       </section>

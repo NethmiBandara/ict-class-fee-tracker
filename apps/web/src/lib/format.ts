@@ -21,6 +21,52 @@ export function weekCountLabel(count: number): string {
   return `${count} week${count === 1 ? "" : "s"}`;
 }
 
+export function dayCountLabel(count: number): string {
+  return `${count} day${count === 1 ? "" : "s"}`;
+}
+
+export function dailyPaymentSlot(iso: string): number {
+  return Number(iso.replaceAll("-", ""));
+}
+
+export function dailySlotToDate(slot: number): string | null {
+  const text = String(slot);
+  if (!/^20\d{6}$/.test(text)) return null;
+  return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
+}
+
+export function billingPeriodLabel(period: "monthly" | "weekly" | "daily") {
+  if (period === "daily") return "Daily";
+  if (period === "weekly") return "Weekly";
+  return "Monthly";
+}
+
+export function feeUnit(period: "monthly" | "weekly" | "daily") {
+  if (period === "daily") return "/ day";
+  if (period === "weekly") return "/ week";
+  return "/ month";
+}
+
+export function formatClassDay(iso: string): string {
+  const date = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString("en-LK", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function shiftISODate(iso: string, delta: number): string {
+  const date = new Date(`${iso}T00:00:00`);
+  date.setDate(date.getDate() + delta);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export const WEEKS_PER_FEE_MONTH = 4;
 
 export function slotPresentWeeks(slot: { days?: string[] }) {
