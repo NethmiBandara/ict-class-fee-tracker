@@ -18,8 +18,12 @@ export default function Error({
 
       <div className="panel space-y-3 p-4 text-sm leading-relaxed">
         <p>
-          On Vercel this usually means the hosted database is not configured.
-          Local SQLite cannot persist in production.
+          The page could not load its data. On a new Vercel project this is
+          usually a missing hosted database. Local SQLite cannot persist in
+          production.
+        </p>
+        <p className="text-xs text-[var(--muted)]">
+          Open /api/health for the exact database error.
         </p>
         <ol className="list-decimal space-y-1 pl-5">
           <li>

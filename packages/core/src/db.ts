@@ -673,8 +673,23 @@ async function ensureDailyBillingPeriod(mode: "remote" | "local") {
   }
 
   const remote = getRemoteDb();
-  await remote.execute("PRAGMA foreign_keys = OFF");
+  const dependents = ["students", "payments", "attendance", "class_holidays"] as const;
+  const beforeDependents = new Map<string, number>();
   try {
+    for (const table of dependents) {
+      const count = await rawCount(mode, table);
+      beforeDependents.set(table, count);
+      await execSql(mode, `DROP TABLE IF EXISTS ${table}_keep`);
+      if (!(await tableExists(mode, table))) continue;
+      await execSql(mode, `CREATE TABLE ${table}_keep AS SELECT * FROM ${table}`);
+      const backedUp = await rawCount(mode, `${table}_keep`);
+      if (backedUp !== count) {
+        throw new DatabaseConfigError(
+          `${table} migration refused: backed up ${backedUp} of ${count} rows. Existing rows were left unchanged.`,
+        );
+      }
+    }
+
     await remote.execute(createNew);
     await remote.execute(copy);
     const copied = await rawCount(mode, "classes_v2");
@@ -684,15 +699,56 @@ async function ensureDailyBillingPeriod(mode: "remote" | "local") {
         `Class migration refused: copied ${copied} of ${before} rows. Existing classes were left unchanged.`,
       );
     }
-    await remote.batch(
-      [
-        { sql: "DROP TABLE classes" },
-        { sql: "ALTER TABLE classes_v2 RENAME TO classes" },
-      ],
-      "write",
-    );
-  } finally {
-    await remote.execute("PRAGMA foreign_keys = ON");
+
+    // Libsql runs each request on its own connection, so a separate
+    // PRAGMA foreign_keys=OFF does not apply to the drop. Dropping classes
+    // then deletes students, payments, and attendance through ON DELETE CASCADE.
+    // Copy those tables first and put them back in the same script as the drop.
+    const statements = [
+      "PRAGMA foreign_keys = OFF",
+      "DROP TABLE classes",
+      "ALTER TABLE classes_v2 RENAME TO classes",
+    ];
+    for (const table of dependents) {
+      if (!(await tableExists(mode, `${table}_keep`))) continue;
+      statements.push(`DELETE FROM ${table}`);
+      statements.push(`INSERT INTO ${table} SELECT * FROM ${table}_keep`);
+      statements.push(`DROP TABLE ${table}_keep`);
+    }
+    statements.push("PRAGMA foreign_keys = ON");
+    await remote.executeMultiple(statements.join(";\n"));
+
+    for (const [table, count] of beforeDependents) {
+      const now = await rawCount(mode, table);
+      if (now < count) {
+        throw new DatabaseConfigError(
+          `${table} migration refused: ${count} rows became ${now}.`,
+        );
+      }
+    }
+  } catch (error) {
+    for (const table of dependents) {
+      const keep = `${table}_keep`;
+      if (!(await tableExists(mode, keep))) continue;
+      const expected = beforeDependents.get(table) ?? 0;
+      const now = await rawCount(mode, table);
+      if (now < expected) {
+        try {
+          await remote.executeMultiple(
+            `PRAGMA foreign_keys = OFF;\nINSERT INTO ${table} SELECT * FROM ${keep};\nDROP TABLE ${keep};`,
+          );
+        } catch {
+          // Leave the backup table in place for recovery.
+        }
+      } else {
+        await execSql(mode, `DROP TABLE ${keep}`);
+      }
+    }
+    if (await tableExists(mode, "classes_v2")) {
+      const classesLeft = await rawCount(mode, "classes");
+      if (classesLeft > 0) await execSql(mode, "DROP TABLE classes_v2");
+    }
+    throw error;
   }
 }
 
