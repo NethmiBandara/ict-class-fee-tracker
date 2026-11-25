@@ -1,7 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { readSessionToken, SESSION_COOKIE } from "@/lib/session-token";
 
-const PUBLIC_PATHS = new Set(["/login", "/signup", "/api/health", "/apple-icon"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/signup",
+  "/api/health",
+  "/apple-icon",
+  "/api/auth/google",
+  "/api/auth/google/callback",
+]);
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

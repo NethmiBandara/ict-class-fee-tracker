@@ -26,6 +26,36 @@ export function canSignSessions() {
   return secret() !== null;
 }
 
+export function sealJson(value: unknown): string | null {
+  const key = secret();
+  if (!key) return null;
+  const body = Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${body}.${sign(body, key)}`;
+}
+
+export function openJson<T>(token: string | undefined | null): T | null {
+  const key = secret();
+  if (!key || !token) return null;
+  const dot = token.indexOf(".");
+  if (dot <= 0 || dot !== token.lastIndexOf(".")) return null;
+  const body = token.slice(0, dot);
+  const signature = token.slice(dot + 1);
+  const expected = sign(body, key);
+  const actualBuf = Buffer.from(signature);
+  const expectedBuf = Buffer.from(expected);
+  if (
+    actualBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(actualBuf, expectedBuf)
+  ) {
+    return null;
+  }
+  try {
+    return JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
 export function signSessionToken(payload: SessionPayload): string | null {
   const key = secret();
   if (!key) return null;

@@ -139,6 +139,7 @@ declare global {
   var __feeSchemaReady: boolean | undefined;
   var __feeSchemaPromise: Promise<void> | undefined;
   var __feeAuthReady: boolean | undefined;
+  var __feeGoogleReady: boolean | undefined;
   var __feeEnvLoaded: boolean | undefined;
 }
 
@@ -209,6 +210,7 @@ function getLocalDb(): DatabaseSync {
     globalThis.__feeLocalDbPath = dbPath;
     globalThis.__feeSchemaReady = false;
     globalThis.__feeAuthReady = false;
+    globalThis.__feeGoogleReady = false;
   }
   return globalThis.__feeLocalDb;
 }
@@ -1054,6 +1056,7 @@ const SQLITE_USERS_SQL = `
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    google_sub TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   )`;
 
@@ -1071,6 +1074,7 @@ const POSTGRES_USERS_SQL = `
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
+    google_sub TEXT,
     created_at TEXT NOT NULL DEFAULT (to_char(timezone('Asia/Colombo', clock_timestamp()), 'YYYY-MM-DD HH24:MI:SS'))
   )`;
 
@@ -1083,6 +1087,24 @@ const POSTGRES_SESSIONS_SQL = `
   )`;
 
 const SESSION_INDEX_SQL = `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`;
+const GOOGLE_INDEX_SQL = `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL`;
+
+async function ensureGoogleIdentity() {
+  if (getEngine() === "postgres") {
+    const db = getPostgres();
+    await db.unsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT`);
+    await db.unsafe(GOOGLE_INDEX_SQL);
+    return;
+  }
+
+  const mode = getDatabaseMode();
+  const columns = await tableColumns(mode, "users");
+  if (!columns.includes("google_sub")) {
+    await execSql(mode, `ALTER TABLE users ADD COLUMN google_sub TEXT`);
+  }
+  await execSql(mode, GOOGLE_INDEX_SQL);
+  if (mode === "local") persistLocalWrites();
+}
 
 async function ensureAuthTables() {
   if (getEngine() === "postgres") {
@@ -1101,9 +1123,14 @@ async function ensureAuthTables() {
 }
 
 async function ensureAuthReady() {
-  if (globalThis.__feeAuthReady) return;
-  await ensureAuthTables();
-  globalThis.__feeAuthReady = true;
+  if (!globalThis.__feeAuthReady) {
+    await ensureAuthTables();
+    globalThis.__feeAuthReady = true;
+  }
+  if (!globalThis.__feeGoogleReady) {
+    await ensureGoogleIdentity();
+    globalThis.__feeGoogleReady = true;
+  }
 }
 
 async function migrate() {

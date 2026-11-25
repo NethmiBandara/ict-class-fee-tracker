@@ -44,6 +44,7 @@ export {
   deleteAuthSession,
   getUserForSession,
   registerUser,
+  signInWithGoogle,
   type AuthUser,
 } from "./auth";
 
