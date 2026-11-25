@@ -137,6 +137,7 @@ declare global {
   var __feeRemoteDb: Client | undefined;
   var __feePg: postgres.Sql | undefined;
   var __feeSchemaReady: boolean | undefined;
+  var __feeSchemaPromise: Promise<void> | undefined;
   var __feeEnvLoaded: boolean | undefined;
 }
 
@@ -247,7 +248,9 @@ function getPostgres(): postgres.Sql {
     globalThis.__feePg = postgres(url, {
       prepare: false,
       ssl: "require",
-      max: 1,
+      // The transaction pooler hangs if several queries are pipelined on one
+      // connection. Give each in-flight query its own connection.
+      max: 10,
       idle_timeout: 20,
       connect_timeout: 15,
     });
@@ -375,14 +378,22 @@ const POSTGRES_SCHEMA = `
 
 async function migratePostgres() {
   if (globalThis.__feeSchemaReady) return;
-  const db = getPostgres();
-  const statements = POSTGRES_SCHEMA.split(";")
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-  for (const statement of statements) {
-    await db.unsafe(statement);
+  if (!globalThis.__feeSchemaPromise) {
+    globalThis.__feeSchemaPromise = (async () => {
+      const db = getPostgres();
+      const statements = POSTGRES_SCHEMA.split(";")
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+      for (const statement of statements) {
+        await db.unsafe(statement);
+      }
+      globalThis.__feeSchemaReady = true;
+    })().catch((error) => {
+      globalThis.__feeSchemaPromise = undefined;
+      throw error;
+    });
   }
-  globalThis.__feeSchemaReady = true;
+  await globalThis.__feeSchemaPromise;
 }
 
 function normalizeValue(value: unknown): unknown {
