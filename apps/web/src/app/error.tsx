@@ -30,23 +30,17 @@ export default function Error({
             Create a free database at{" "}
             <a
               className="text-[var(--accent)] underline"
-              href="https://turso.tech"
+              href="https://supabase.com"
               target="_blank"
               rel="noreferrer"
             >
-              turso.tech
+              supabase.com
             </a>
           </li>
           <li>
-            In Vercel → Project → Settings → Environment Variables, add:
-            <ul className="mt-1 list-disc pl-5">
-              <li>
-                <code>TURSO_DATABASE_URL</code>
-              </li>
-              <li>
-                <code>TURSO_AUTH_TOKEN</code>
-              </li>
-            </ul>
+            In Vercel → Project → Settings → Environment Variables, add{" "}
+            <code>SUPABASE_DATABASE_URL</code> with the Postgres connection
+            string.
           </li>
           <li>Redeploy the project.</li>
         </ol>
