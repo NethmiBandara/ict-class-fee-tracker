@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/AuthCard";
+import { googleErrorMessage } from "@/lib/google";
 import { getCurrentUser, safeNextPath } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -12,9 +13,15 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   if (await getCurrentUser()) redirect("/");
   const params = await searchParams;
-  return <AuthCard mode="login" nextPath={safeNextPath(params.next)} />;
+  return (
+    <AuthCard
+      mode="login"
+      nextPath={safeNextPath(params.next)}
+      notice={googleErrorMessage(params.error)}
+    />
+  );
 }

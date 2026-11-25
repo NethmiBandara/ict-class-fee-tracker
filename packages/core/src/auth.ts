@@ -107,9 +107,79 @@ export async function authenticateUser(
     await burnPasswordCheck(password);
     return null;
   }
+  if (!row.password_hash.startsWith("scrypt$")) {
+    await burnPasswordCheck(password);
+    return null;
+  }
   const matches = await verifyPassword(password, row.password_hash);
   if (!matches) return null;
   return { id: Number(row.id), name: row.name, email: row.email };
+}
+
+export async function signInWithGoogle(profile: {
+  sub: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+}): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
+  const sub = profile.sub.trim();
+  const email = profile.email.trim().toLowerCase();
+  if (!/^[A-Za-z0-9_-]{1,255}$/.test(sub)) {
+    return { ok: false, error: "Google did not return a usable account id." };
+  }
+  if (!profile.emailVerified || !EMAIL_RE.test(email) || email.length > 160) {
+    return { ok: false, error: "That Google account has no verified email." };
+  }
+
+  const cleanedName = profile.name.trim().replace(/\s+/g, " ").slice(0, 80);
+  const name =
+    cleanedName.length >= 2 ? cleanedName : email.split("@")[0] || "Google user";
+
+  const bySub = await sqlGet<AuthUser>(
+    "SELECT id, name, email FROM users WHERE google_sub = ?",
+    [sub],
+  );
+  if (bySub) {
+    return {
+      ok: true,
+      user: { id: Number(bySub.id), name: bySub.name, email: bySub.email },
+    };
+  }
+
+  const byEmail = await sqlGet<AuthUser & { google_sub: string | null }>(
+    "SELECT id, name, email, google_sub FROM users WHERE email = ?",
+    [email],
+  );
+  if (byEmail?.google_sub && byEmail.google_sub !== sub) {
+    return {
+      ok: false,
+      error: "That email is already linked to a different Google account.",
+    };
+  }
+  if (byEmail) {
+    await sqlRun("UPDATE users SET google_sub = ? WHERE id = ?", [sub, byEmail.id]);
+    return {
+      ok: true,
+      user: { id: Number(byEmail.id), name: byEmail.name, email: byEmail.email },
+    };
+  }
+
+  try {
+    const marker = `google$${randomBytes(16).toString("hex")}`;
+    const result = await sqlRun(
+      "INSERT INTO users (name, email, password_hash, google_sub) VALUES (?, ?, ?, ?)",
+      [name, email, marker, sub],
+    );
+    return {
+      ok: true,
+      user: { id: Number(result.lastInsertRowid), name, email },
+    };
+  } catch (error) {
+    if (isUniqueError(error)) {
+      return { ok: false, error: "That Google account could not be linked. Try again." };
+    }
+    throw error;
+  }
 }
 
 export async function createAuthSession(
