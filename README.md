@@ -6,12 +6,13 @@ This is an npm workspaces monorepo:
 
 - `apps/web` — Next.js UI (also runs the data layer on the server)
 - `apps/api` — optional Express API
-- `packages/core` — SQLite / Turso, queries, and mutations
+- `packages/core` — local SQLite or production Supabase, queries, and mutations
 
 ## Features
 
-- Weekly attendance (4 present days = 1 fee month)
-- Late payments auto-fill unpaid months, with a paying date
+- Monthly classes: 4 present class days = 1 fee month
+- Weekly classes: one payment per week
+- Daily classes: attendance per day, and one payment can cover several attended days
 - Dashboard, records, and annual reports
 
 ## Run locally
@@ -36,18 +37,16 @@ npm run dev
 
 ## Deploy on Vercel
 
-Vercel hosts `apps/web`. The Next.js server talks to Turso directly — you do **not** need a separate API host or `API_URL`.
+Vercel hosts `apps/web`. The Next.js server talks to Supabase directly. You do not need a separate API host.
 
-1. Create a free database at [turso.tech](https://turso.tech)
-2. In Vercel → Project → Settings → Environment Variables, add:
-   - `TURSO_DATABASE_URL` = `libsql://...`
-   - `TURSO_AUTH_TOKEN` = your token
-3. Keep the repo-root `vercel.json` (build `npm run build -w web`, output `apps/web/.next`)
-4. Redeploy the **code only**. Existing Turso classes, students, payments, attendance, and holidays stay in place. Schema upgrades copy old payment rows before they change the table, and abort if a row count would shrink.
-5. Open `/api/health` on the deployed site. It should report `"mode": "remote"` plus class/student/payment counts. Those counts should not drop after deploy.
+1. Create a Supabase project at [supabase.com](https://supabase.com).
+2. In Vercel → Project → Settings → Environment Variables, set `SUPABASE_DATABASE_URL` to the Postgres connection string from Supabase → Connect → Transaction pooler (port 6543). If the database password contains `@`, write it as `%40` inside the URL.
+3. Keep the repo-root `vercel.json` (build `npm run build -w web`, output `apps/web/.next`).
+4. Redeploy the code only. Existing classes, students, payments, attendance, and holidays stay in Supabase.
+5. Open `/api/health` on the deployed site. It should report `"mode": "remote"` and `"engine": "supabase"`. Class, student, payment, attendance, and holiday counts must not drop.
 
-If a deploy says `.next` was not found, turn **off** Output Directory Override in Vercel, or set it to `apps/web/.next`.
+If a deploy says `.next` was not found, turn off Output Directory Override in Vercel, or set it to `apps/web/.next`.
 
 Use Node.js 22 on Vercel (see `.nvmrc`). Tables are created automatically on first request.
 
-Localhost (`apps/api/data/fees.db`) and production (Turso) are separate databases. A production deploy never copies localhost rows onto Turso. Do not run `scripts/push-local-to-turso.mjs` against a live school database.
+Localhost (`apps/api/data/fees.db`) and production (Supabase) are separate databases. A production deploy never copies localhost rows into Supabase. Do not run `scripts/copy-sqlite-to-supabase.mjs` against the live school database.

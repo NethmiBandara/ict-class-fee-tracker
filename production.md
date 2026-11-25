@@ -1,6 +1,6 @@
 # ICT Class Fee Tracker — production notes
 
-Tracks ICT class fees in **LKR**. Teachers record weekly attendance, holiday weeks, and payments. **Four present weeks = one fee month.** Absent weeks and holiday weeks do not count toward that month. Students can pay early; later present weeks fill that paid month.
+Tracks ICT class fees in **LKR**. Teachers record attendance by class day, holidays, and payments. Monthly classes bill every 4 present days. Weekly classes bill one week at a time. Daily classes keep each attended day, and one payment can cover several of those days.
 
 Live site: [https://ict-class-fee-tracker.vercel.app](https://ict-class-fee-tracker.vercel.app)
 
@@ -12,19 +12,19 @@ npm workspaces monorepo. Node.js **22+** is required (`node:sqlite` locally, `.n
 | --- | --- |
 | `apps/web` | Next.js UI. **This is what Vercel hosts.** Server components and server actions talk to the database through `@ict/core`. |
 | `apps/api` | Optional Express API on port **4000**. Not used in production. |
-| `packages/core` | Shared SQLite/Turso layer, schema, queries, billing, mutations. |
+| `packages/core` | Shared database layer (local SQLite, production Supabase Postgres), schema, queries, billing, mutations. |
 
-Production does **not** need `API_URL` or a separate API host. The Next.js server writes to **Turso** directly.
+Production does not need a separate API host. The Next.js server writes to **Supabase Postgres** directly.
 
 ## Environments
 
 | | Localhost | Production |
 | --- | --- | --- |
 | App | `http://localhost:3000` | `https://ict-class-fee-tracker.vercel.app` |
-| Database | SQLite `apps/api/data/fees.db` | Turso (`TURSO_DATABASE_URL`) |
+| Database | SQLite `apps/api/data/fees.db` | Supabase Postgres (`SUPABASE_DATABASE_URL`) |
 | Optional API | `http://localhost:4000` | not deployed |
 
-These are **separate databases**. A deploy changes app code only. It never copies localhost rows onto Turso. Do not run `scripts/push-local-to-turso.mjs` against the live school database.
+These are separate databases. A deploy changes app code only. It never copies localhost rows into Supabase. Do not run `scripts/copy-sqlite-to-supabase.mjs` against the live school database.
 
 ## Environment variables
 
@@ -32,14 +32,12 @@ Set these on the **Vercel web project** (Production, Preview, Development as nee
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `TURSO_DATABASE_URL` | **Yes on Vercel** | `libsql://…` database URL |
-| `TURSO_AUTH_TOKEN` | **Yes on Vercel** | Turso auth token |
+| `SUPABASE_DATABASE_URL` | **Yes on Vercel** | Postgres connection string from Supabase → Connect → Transaction pooler (port 6543). Encode `@` in the password as `%40`. |
 | `SQLITE_DATA_DIR` | No | Override local SQLite folder (defaults to `apps/api/data`) |
 | `PORT` | No | Express API port (default `4000`) |
 | `WEB_ORIGIN` | No | CORS origin for the Express API (default `http://localhost:3000`) |
-| `API_URL` | No | Unused in production. Local web `.env.local` may still have it. |
 
-If Turso is missing on Vercel, the app cannot use local SQLite (ephemeral filesystem) and `/api/health` returns an error.
+If `SUPABASE_DATABASE_URL` is missing on Vercel, the app cannot use local SQLite and `/api/health` returns an error. Local development needs no env file.
 
 ## App pages (production)
 
@@ -49,19 +47,16 @@ All pages read/write through `@ict/core` (server actions), not the Express API.
 | --- | --- |
 | `/` | Dashboard: monthly income, paid/unpaid, recent payments |
 | `/classes` | Create/list/delete classes |
-| `/classes/[id]` | Attendance by date, holiday weeks, payments (including pay early) |
+| `/classes/[id]` | Attendance by date, holidays, payments |
 | `/records` | Filter students by month, paid/unpaid, class |
 | `/reports` | Annual income plus class-wise / student-wise attendance |
 | `/api/health` | Storage mode and row counts (see below) |
 
 ## Billing rules
 
-- ISO week attendance. One present day in a week counts as that week present.
-- **4 present weeks = 1 paying month** for monthly classes.
-- Holiday weeks and absences are skipped.
-- Late pay fills unpaid complete months first.
-- Pay-early marks an incomplete leftover slot; later present weeks attach to that paid month until 4 weeks are filled.
-- Weekly-billed classes pay per ISO week instead of a 4-week slot.
+- Monthly classes: each present class day counts. **4 present days = 1 fee month.** Absences and holidays are skipped.
+- Weekly classes: one payment per ISO week.
+- Daily classes: attendance is stored per calendar date. One payment can cover several attended days.
 - Amounts are integers in LKR.
 
 ## Database
@@ -70,11 +65,11 @@ Tables are created/upgraded on first request. Upgrades copy existing payment row
 
 | Table | Purpose |
 | --- | --- |
-| `classes` | Name, fee, `billing_period` (`monthly` \| `weekly`) |
+| `classes` | Name, fee, `billing_period` (`monthly` \| `weekly` \| `daily`) |
 | `students` | Name, phone, active flag, class |
 | `payments` | Unique on `(student_id, year, month, week, slot)` |
-| `attendance` | Unique on `(student_id, year, week)` plus `attended_on` |
-| `class_holidays` | Unique on `(class_id, year, week)` |
+| `attendance` | Unique on `(student_id, attended_on)` |
+| `class_holidays` | A row with `holiday_on` is one day. A null `holiday_on` is a legacy whole-week holiday. |
 
 Deleting a class or student cascades to related rows.
 
@@ -84,23 +79,24 @@ The only public HTTP route on Vercel is health.
 
 ### `GET /api/health`
 
-Confirms the live app can reach Turso. After deploy, `mode` must be `"remote"` and counts must not drop.
+Confirms the live app can reach Supabase. After deploy, `mode` must be `"remote"`, `engine` must be `"supabase"`, and counts must not drop.
 
 ```json
 {
   "ok": true,
   "mode": "remote",
+  "engine": "supabase",
   "counts": {
-    "classes": 9,
-    "students": 32,
-    "payments": 0,
-    "attendance": 0,
-    "holidays": 0
+    "classes": 10,
+    "students": 37,
+    "payments": 29,
+    "attendance": 151,
+    "holidays": 1
   }
 }
 ```
 
-On localhost, `mode` is `"local"` and `path` is the SQLite file. `500` with an error means Turso is missing or unreachable.
+On localhost, `mode` is `"local"`, `engine` is `"sqlite"`, and `path` is the SQLite file. A `500` means `SUPABASE_DATABASE_URL` is missing or unreachable.
 
 Writes on production go through **Next.js server actions** in `apps/web/src/lib/actions.ts` (same mutations as the Express API).
 
@@ -121,7 +117,7 @@ Base URL: `http://localhost:4000`. JSON in/out. CORS allows `WEB_ORIGIN`. Mutati
 | --- | --- | --- |
 | `GET` | `/api/classes` | — |
 | `GET` | `/api/classes/:id` | — |
-| `POST` | `/api/classes` | `name`, `monthly_fee`, `billing_period` (`monthly` \| `weekly`), `students` (string or array of names) |
+| `POST` | `/api/classes` | `name`, `monthly_fee`, `billing_period` (`monthly` \| `weekly` \| `daily`), `students` (string or array of names) |
 | `PATCH` | `/api/classes/:id` | `name`, `monthly_fee`, `billing_period` |
 | `DELETE` | `/api/classes/:id` | — |
 | `GET` | `/api/classes/:id/holiday` | Query: `year`, `week` |
@@ -156,7 +152,7 @@ Base URL: `http://localhost:4000`. JSON in/out. CORS allows `WEB_ORIGIN`. Mutati
 
 | Method | Path | Query |
 | --- | --- | --- |
-| `GET` | `/api/records` | **Required:** `year`, `month`. Optional: `week`, `classId`, `status` (`all` \| `paid` \| `unpaid`), `billingPeriod` (`monthly` \| `weekly`) |
+| `GET` | `/api/records` | **Required:** `year`, `month`. Optional: `week`, `classId`, `status` (`all` \| `paid` \| `unpaid`), `billingPeriod` (`monthly` \| `weekly` \| `daily`) |
 | `GET` | `/api/stats/monthly` | `year`, `month` |
 | `GET` | `/api/stats/monthly/classes` | `year`, `month` |
 | `GET` | `/api/stats/annual` | `year` |
@@ -175,12 +171,12 @@ Repo-root `vercel.json` already sets:
 
 Checklist:
 
-1. Turso database at [turso.tech](https://turso.tech)
-2. `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` on the Vercel **web** project
+1. Supabase project at [supabase.com](https://supabase.com)
+2. `SUPABASE_DATABASE_URL` on the Vercel web project (transaction pooler, port 6543; encode `@` in the password as `%40`)
 3. Node **22** on the Vercel project
 4. If build fails looking for `.next`, turn **off** Output Directory Override, or set it to `apps/web/.next`
 5. Redeploy **code only**
-6. Hit `https://ict-class-fee-tracker.vercel.app/api/health` — expect `"mode": "remote"` and the same class/student counts as before
+6. Hit `https://ict-class-fee-tracker.vercel.app/api/health` — expect `"mode": "remote"`, `"engine": "supabase"`, and counts that have not dropped
 
 ## Local commands
 
@@ -194,6 +190,7 @@ npx tsx scripts/verify-storage.mjs
 ## Do not
 
 - Point production at SQLite
-- Copy `apps/api/data/fees.db` into Turso
-- Commit `.env*` files or the SQLite database
+- Copy `apps/api/data/fees.db` into Supabase
+- Run `scripts/copy-sqlite-to-supabase.mjs` against the live school database
+- Commit `.env` files or the SQLite database
 - Host the Express app on Vercel — the Next.js app is the production backend
