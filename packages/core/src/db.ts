@@ -247,12 +247,16 @@ function getPostgres(): postgres.Sql {
     }
     globalThis.__feePg = postgres(url, {
       prepare: false,
+      fetch_types: false,
       ssl: "require",
-      // The transaction pooler hangs if several queries are pipelined on one
-      // connection. Give each in-flight query its own connection.
+      // Supabase's transaction pooler (port 6543) stalls if two queries are
+      // sent on one connection before the first answer comes back. Keep one
+      // query per connection and let the rest wait.
       max: 10,
+      max_pipeline: 1,
       idle_timeout: 20,
       connect_timeout: 15,
+      query_timeout: 20,
     });
   }
   return globalThis.__feePg;
