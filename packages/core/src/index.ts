@@ -39,6 +39,15 @@ export {
 } from "./queries";
 
 export {
+  authenticateUser,
+  createAuthSession,
+  deleteAuthSession,
+  getUserForSession,
+  registerUser,
+  type AuthUser,
+} from "./auth";
+
+export {
   createClass,
   createStudent,
   deleteClass,

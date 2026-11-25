@@ -17,6 +17,12 @@ import {
   type StudentBilling,
 } from "@ict/core";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/session";
+
+async function guard() {
+  if (!(await getCurrentUser())) redirect("/login");
+}
 
 function revalidateAll() {
   revalidatePath("/");
@@ -26,6 +32,7 @@ function revalidateAll() {
 }
 
 export async function createClass(formData: FormData): Promise<ActionResult> {
+  await guard();
   const result = await createClassRecord({
     name: String(formData.get("name") || ""),
     monthly_fee: Number(formData.get("monthly_fee") || 0),
@@ -40,6 +47,7 @@ export async function createClass(formData: FormData): Promise<ActionResult> {
 }
 
 export async function updateClass(formData: FormData): Promise<ActionResult> {
+  await guard();
   const id = Number(formData.get("id"));
   const result = await updateClassRecord({
     id,
@@ -55,6 +63,7 @@ export async function updateClass(formData: FormData): Promise<ActionResult> {
 }
 
 export async function deleteClass(formData: FormData): Promise<ActionResult> {
+  await guard();
   const id = Number(formData.get("id"));
   const result = await deleteClassRecord(id);
   if (result.ok) revalidateAll();
@@ -62,6 +71,7 @@ export async function deleteClass(formData: FormData): Promise<ActionResult> {
 }
 
 export async function createStudent(formData: FormData): Promise<ActionResult> {
+  await guard();
   const classId = Number(formData.get("class_id"));
   const result = await createStudentRecord({
     class_id: classId,
@@ -76,6 +86,7 @@ export async function createStudent(formData: FormData): Promise<ActionResult> {
 }
 
 export async function updateStudent(formData: FormData): Promise<ActionResult> {
+  await guard();
   const id = Number(formData.get("id"));
   const classId = Number(formData.get("class_id"));
   const result = await updateStudentRecord({
@@ -92,6 +103,7 @@ export async function updateStudent(formData: FormData): Promise<ActionResult> {
 }
 
 export async function deleteStudent(formData: FormData): Promise<ActionResult> {
+  await guard();
   const id = Number(formData.get("id"));
   const classId = Number(formData.get("class_id"));
   const result = await deleteStudentRecord(id);
@@ -103,6 +115,7 @@ export async function deleteStudent(formData: FormData): Promise<ActionResult> {
 }
 
 export async function markPaid(formData: FormData): Promise<ActionResult> {
+  await guard();
   const periodsRaw = String(formData.get("periods") || "").trim();
   const periods = periodsRaw
     ? (JSON.parse(periodsRaw) as Array<{
@@ -133,6 +146,7 @@ export async function markPaid(formData: FormData): Promise<ActionResult> {
 }
 
 export async function markUnpaid(formData: FormData): Promise<ActionResult> {
+  await guard();
   const periodsRaw = String(formData.get("periods") || "").trim();
   const periods = periodsRaw
     ? (JSON.parse(periodsRaw) as Array<{
@@ -162,10 +176,12 @@ export async function markUnpaid(formData: FormData): Promise<ActionResult> {
 export async function loadStudentBilling(
   studentId: number,
 ): Promise<StudentBilling> {
+  await guard();
   return getStudentBilling(studentId);
 }
 
 export async function setAttendance(formData: FormData): Promise<ActionResult> {
+  await guard();
   const classId = Number(formData.get("class_id"));
   const result = await setAttendanceRecord({
     student_id: Number(formData.get("student_id")),
@@ -184,6 +200,7 @@ export async function setAttendance(formData: FormData): Promise<ActionResult> {
 export async function setAttendanceByDate(
   formData: FormData,
 ): Promise<ActionResult> {
+  await guard();
   const classId = Number(formData.get("class_id"));
   const result = await setAttendanceByDateRecord({
     class_id: classId,
@@ -198,6 +215,7 @@ export async function setAttendanceByDate(
 }
 
 export async function setClassHoliday(formData: FormData): Promise<ActionResult> {
+  await guard();
   const classId = Number(formData.get("class_id"));
   const result = await setClassHolidayRecord({
     class_id: classId,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { logout } from "@/lib/auth-actions";
 
 const links = [
   { href: "/", label: "Dashboard" },
@@ -11,7 +12,7 @@ const links = [
   { href: "/reports", label: "Reports" },
 ];
 
-export function Nav() {
+export function Nav({ userName }: { userName: string }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -63,6 +64,19 @@ export function Nav() {
               </Link>
             );
           })}
+          <div className="mt-2 flex items-center justify-between gap-3 border-t border-[var(--line)] pt-3 sm:mt-0 sm:ml-2 sm:border-0 sm:pt-0">
+            <span
+              className="max-w-[10rem] truncate text-sm font-medium text-[var(--ink)]"
+              title={userName}
+            >
+              {userName}
+            </span>
+            <form action={logout}>
+              <button type="submit" className="btn-ghost">
+                Sign out
+              </button>
+            </form>
+          </div>
         </nav>
       </div>
     </header>
