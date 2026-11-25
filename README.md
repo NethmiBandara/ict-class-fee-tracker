@@ -50,3 +50,14 @@ If a deploy says `.next` was not found, turn off Output Directory Override in Ve
 Use Node.js 22 on Vercel (see `.nvmrc`). Tables are created automatically on first request.
 
 Localhost (`apps/api/data/fees.db`) and production (Supabase) are separate databases. A production deploy never copies localhost rows into Supabase. Do not run `scripts/copy-sqlite-to-supabase.mjs` against the live school database.
+
+## Automation
+
+Pull requests are tested by a Cursor agent named **QA and merge to master**. The agent is saved in Cursor and is turned on. It is not a file in this repository.
+
+- It starts when a pull request is pushed in `NethmiBandara/ict-class-fee-tracker`.
+- It checks out that pull request and tests the app on local SQLite only. It does not connect to the live Supabase database and does not change school data.
+- It opens the dashboard, the class list, one class page, records, and reports, and checks that `/api/health` is using the local database.
+- It comments on the pull request with what passed and what failed.
+- It merges into `master` only when every check passed.
+- It does not deploy. Vercel deploys `master` after that merge.

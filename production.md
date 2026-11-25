@@ -160,6 +160,18 @@ Base URL: `http://localhost:4000`. JSON in/out. CORS allows `WEB_ORIGIN`. Mutati
 | `GET` | `/api/stats/annual/classes` | `year` |
 | `GET` | `/api/stats/annual/attendance` | `year` |
 
+## Automation
+
+A Cursor agent named **QA and merge to master** is Active for this repository. It is stored in Cursor, not in git.
+
+| | |
+| --- | --- |
+| Trigger | A pull request is pushed in `NethmiBandara/ict-class-fee-tracker` |
+| Test data | Local SQLite only. The live Supabase database is not used. |
+| Checks | Dashboard, class list, one class page, records, reports, and `/api/health` on the local database |
+| Result | Comment on the pull request. Merge into `master` only if every check passed. |
+| Deploy | The agent does not deploy. Vercel deploys `master` after the merge. |
+
 ## Deploy on Vercel
 
 Repo-root `vercel.json` already sets:
@@ -194,3 +206,4 @@ npx tsx scripts/verify-storage.mjs
 - Run `scripts/copy-sqlite-to-supabase.mjs` against the live school database
 - Commit `.env` files or the SQLite database
 - Host the Express app on Vercel — the Next.js app is the production backend
+- Let the QA agent connect to the live Supabase database
